@@ -489,69 +489,85 @@ impl Launcher {
         if upd_count > 0 || is_updating {
             let banner_bg = Color32::from_rgb(0x2A, 0x1F, 0x0A);
             let banner_stroke = Stroke::new(1.0_f32, Color32::from_rgb(0xD4, 0x90, 0x1A));
-            Frame::new()
-                .fill(banner_bg)
-                .stroke(banner_stroke)
-                .corner_radius(6.0_f32)
-                .inner_margin(Margin::symmetric(14, 7))
-                .show(ui, |ui| {
-                    if is_updating {
-                        let (pct, desc) = self.updater.overall_progress().unwrap_or((0.15, if ko { "업데이트 진행 중...".to_string() } else { "Updating...".to_string() }));
-                        let pct_100 = (pct * 100.0) as u32;
 
-                        ui.horizontal_centered(|ui| {
-                            ui.label(RichText::new("⏳").size(15.0_f32));
-                            let msg = if ko {
-                                format!("소프트웨어 업데이트 진행 중 ({pct_100}%) · {desc}")
-                            } else {
-                                format!("Updating software ({pct_100}%) · {desc}")
-                            };
-                            ui.label(RichText::new(msg).font(mono(11.0_f32)).strong().color(Color32::from_rgb(0xF5, 0xC0, 0x40)));
+            ui.allocate_ui_with_layout(
+                vec2(ui.available_width(), 36.0_f32),
+                Layout::left_to_right(Align::Center),
+                |ui| {
+                    Frame::new()
+                        .fill(banner_bg)
+                        .stroke(banner_stroke)
+                        .corner_radius(6.0_f32)
+                        .inner_margin(Margin::symmetric(14, 6))
+                        .show(ui, |ui| {
+                            ui.set_height(24.0_f32);
+                            ui.horizontal(|ui| {
+                                if is_updating {
+                                    let (pct, desc) = self.updater.overall_progress().unwrap_or((0.15, if ko { "업데이트 진행 중...".to_string() } else { "Updating...".to_string() }));
+                                    let pct_100 = (pct * 100.0) as u32;
 
-                            ui.add_space(8.0_f32);
-                            let pb = egui::ProgressBar::new(pct)
-                                .show_percentage()
-                                .fill(Color32::from_rgb(0xF5, 0xC0, 0x40))
-                                .corner_radius(3.0_f32);
-                            ui.add_sized(vec2(160.0_f32, 16.0_f32), pb);
+                                    ui.label(RichText::new("⏳").size(15.0_f32));
+                                    let msg = if ko {
+                                        format!("소프트웨어 업데이트 진행 중 ({pct_100}%) · {desc}")
+                                    } else {
+                                        format!("Updating software ({pct_100}%) · {desc}")
+                                    };
+                                    ui.label(RichText::new(msg).font(mono(11.0_f32)).strong().color(Color32::from_rgb(0xF5, 0xC0, 0x40)));
 
-                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                if chip(ui, if ko { "3M 팝업 열기" } else { "Open Dialog" }, false, false).clicked() {
-                                    self.show_progress_modal = true;
-                                }
-                            });
-                        });
-                    } else {
-                        ui.horizontal_centered(|ui| {
-                            ui.label(RichText::new("💡").size(15.0_f32));
-                            let msg = if ko {
-                                format!("{upd_count}개의 새로운 소프트웨어 업데이트가 있습니다.")
-                            } else {
-                                format!("{upd_count} new software update(s) available.")
-                            };
-                            ui.label(RichText::new(msg).font(mono(11.0_f32)).color(Color32::from_rgb(0xF5, 0xC0, 0x40)));
+                                    ui.add_space(8.0_f32);
+                                    let pb = egui::ProgressBar::new(pct)
+                                        .show_percentage()
+                                        .fill(Color32::from_rgb(0xF5, 0xC0, 0x40))
+                                        .corner_radius(3.0_f32);
+                                    ui.add_sized(vec2(160.0_f32, 16.0_f32), pb);
 
-                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                if chip(ui, if ko { "상세 보기" } else { "Details" }, false, false).clicked() {
-                                    self.show_progress_modal = true;
-                                }
-
-                                let btn_lbl = if ko {
-                                    format!("⚡ 지금 전체 자동 업데이트 ({upd_count})")
+                                    let remaining = ui.available_width() - 95.0_f32;
+                                    if remaining > 0.0_f32 {
+                                        ui.add_space(remaining);
+                                    }
+                                    if chip(ui, if ko { "3M 팝업 열기" } else { "Open Dialog" }, false, false).clicked() {
+                                        self.show_progress_modal = true;
+                                    }
                                 } else {
-                                    format!("⚡ Update All ({upd_count})")
-                                };
-                                let btn = egui::Button::new(RichText::new(btn_lbl).font(mono(10.5_f32)).strong().color(Color32::from_rgb(0x18, 0x12, 0x05)))
-                                    .fill(Color32::from_rgb(0xF5, 0xC0, 0x40))
-                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(0xFF, 0xD4, 0x60)))
-                                    .corner_radius(4.0_f32);
-                                if ui.add(btn).clicked() {
-                                    actions.push(Action::UpdateAll);
+                                    ui.label(RichText::new("💡").size(15.0_f32));
+                                    let msg = if ko {
+                                        format!("{upd_count}개의 새로운 소프트웨어 업데이트가 있습니다.")
+                                    } else {
+                                        format!("{upd_count} new software update(s) available.")
+                                    };
+                                    ui.label(RichText::new(msg).font(mono(11.0_f32)).color(Color32::from_rgb(0xF5, 0xC0, 0x40)));
+
+                                    let btn_lbl = if ko {
+                                        format!("⚡ 지금 전체 자동 업데이트 ({upd_count})")
+                                    } else {
+                                        format!("⚡ Update All ({upd_count})")
+                                    };
+                                    let details_lbl = if ko { "상세 보기" } else { "Details" };
+
+                                    // Spacing to right align buttons cleanly without stretching height
+                                    let btn_w = 210.0_f32;
+                                    let det_w = 70.0_f32;
+                                    let remaining = ui.available_width() - btn_w - det_w - 14.0_f32;
+                                    if remaining > 0.0_f32 {
+                                        ui.add_space(remaining);
+                                    }
+
+                                    let btn = egui::Button::new(RichText::new(btn_lbl).font(mono(10.5_f32)).strong().color(Color32::from_rgb(0x18, 0x12, 0x05)))
+                                        .fill(Color32::from_rgb(0xF5, 0xC0, 0x40))
+                                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(0xFF, 0xD4, 0x60)))
+                                        .corner_radius(4.0_f32);
+                                    if ui.add(btn).clicked() {
+                                        actions.push(Action::UpdateAll);
+                                    }
+
+                                    if chip(ui, details_lbl, false, false).clicked() {
+                                        self.show_progress_modal = true;
+                                    }
                                 }
                             });
                         });
-                    }
-                });
+                },
+            );
             ui.add_space(8.0_f32);
         }
 
