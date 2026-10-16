@@ -1,0 +1,20 @@
+# Rust build outputs
+/launcher/target/
+**/target/
+
+# Distribution artifacts & downloaded apps (fetch via scripts/fetch-apps.ps1)
+/dist/apps/
+/dist/SavedFiles/
+/dist/custom_apps/
+/dist/ArtCraftStudio.exe
+/dist/LICENSES/
+
+# Package outputs & temp caches
+/release/
+/.cache/
+*.log
+
+# Windows / OS metadata
+Thumbs.db
+desktop.ini
+.DS_Store
