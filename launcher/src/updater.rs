@@ -41,14 +41,43 @@ pub fn is_newer(remote: &str, local: &str) -> bool {
 impl UpdateManager {
     pub fn new(exe_dir: PathBuf) -> Self {
         let (sender, receiver) = channel();
+        let initial_versions = Self::read_local_manifest(&exe_dir);
         Self {
             _exe_dir: exe_dir,
             sender,
             receiver,
             in_progress: Arc::new(Mutex::new(HashSet::new())),
-            latest_versions: Arc::new(Mutex::new(HashMap::new())),
+            latest_versions: Arc::new(Mutex::new(initial_versions)),
             is_checking: false,
         }
+    }
+
+    fn read_local_manifest(exe_dir: &Path) -> HashMap<String, String> {
+        let mut map = HashMap::new();
+        let candidates = [
+            exe_dir.join("version.json"),
+            exe_dir.join("../version.json"),
+            PathBuf::from("version.json"),
+        ];
+        for path in &candidates {
+            if path.exists() {
+                if let Ok(content) = std::fs::read_to_string(path) {
+                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&content) {
+                        if let Some(apps) = v.get("apps").and_then(|a| a.as_object()) {
+                            for (id, app_info) in apps {
+                                if let Some(ver) = app_info.get("version").and_then(|s| s.as_str()) {
+                                    map.insert(id.clone(), ver.trim_start_matches('v').to_string());
+                                }
+                            }
+                            if !map.is_empty() {
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        map
     }
 
     pub fn is_updating(&self, app_id: &str) -> bool {

@@ -477,6 +477,60 @@ impl Launcher {
         let total = self.entries.len();
         let running = self.entries.iter().filter(|e| e.status == Status::Running).count();
 
+        // Smart Update Notification Banner: One-Click update right from main screen!
+        let upd_count = self.available_update_count();
+        let is_updating = self.updater.has_active_updates();
+        if upd_count > 0 || is_updating {
+            let banner_bg = Color32::from_rgb(0x2A, 0x1F, 0x0A);
+            let banner_stroke = Stroke::new(1.0_f32, Color32::from_rgb(0xD4, 0x90, 0x1A));
+            Frame::new()
+                .fill(banner_bg)
+                .stroke(banner_stroke)
+                .corner_radius(6.0_f32)
+                .inner_margin(Margin::symmetric(14, 10))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        if is_updating {
+                            ui.label(RichText::new("⏳").size(16.0_f32));
+                            let msg = if ko {
+                                "프로그램을 최신 버전으로 안전하게 업데이트하는 중입니다..."
+                            } else {
+                                "Updating apps to the latest versions in background..."
+                            };
+                            ui.label(RichText::new(msg).font(mono(11.5_f32)).color(Color32::from_rgb(0xF5, 0xC0, 0x40)));
+                        } else {
+                            ui.label(RichText::new("💡").size(16.0_f32));
+                            let msg = if ko {
+                                format!("{upd_count}개의 새로운 소프트웨어 업데이트가 감지되었습니다! 일일이 확인할 필요 없이 한 번에 최신 버전으로 적용됩니다.")
+                            } else {
+                                format!("{upd_count} new app update(s) detected! Update everything with one click.")
+                            };
+                            ui.label(RichText::new(msg).font(mono(11.0_f32)).color(Color32::from_rgb(0xF5, 0xC0, 0x40)));
+
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                if chip(ui, if ko { "상세 보기" } else { "Details" }, false, false).clicked() {
+                                    self.show_updates = true;
+                                }
+
+                                let btn_lbl = if ko {
+                                    format!("⚡ 지금 전체 자동 업데이트 ({upd_count})")
+                                } else {
+                                    format!("⚡ Update All ({upd_count})")
+                                };
+                                let btn = egui::Button::new(RichText::new(btn_lbl).font(mono(11.0_f32)).strong().color(Color32::from_rgb(0x18, 0x12, 0x05)))
+                                    .fill(Color32::from_rgb(0xF5, 0xC0, 0x40))
+                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(0xFF, 0xD4, 0x60)))
+                                    .corner_radius(4.0_f32);
+                                if ui.add(btn).clicked() {
+                                    actions.push(Action::UpdateAll);
+                                }
+                            });
+                        }
+                    });
+                });
+            ui.add_space(10.0_f32);
+        }
+
         ui.horizontal(|ui| {
             let filter_labels = if ko {
                 [
@@ -726,37 +780,68 @@ impl Launcher {
         let mut bui = ui.new_child(UiBuilder::new().max_rect(btn_rect).layout(Layout::left_to_right(Align::Center)));
 
         let is_updating = self.updater.is_updating(&e.meta.id);
-        let btn_label = if is_updating {
-            if ko { "⏳ 업데이트 중..." } else { "⏳ Updating..." }
-        } else if ko {
-            "▶  실행"
+        let has_new_update = if let (Some(cur), Some(lat)) = (&e.version, self.updater.latest_version(&e.meta.id)) {
+            crate::updater::is_newer(&lat, cur)
         } else {
-            "▶  LAUNCH"
+            false
         };
 
-        let fill = if is_updating {
-            Color32::from_rgb(0x35, 0x22, 0x05)
-        } else {
-            lerp(Color32::from_rgb(0x18, 0x18, 0x1C), accent, t)
-        };
-        let fg = if is_updating {
-            Color32::from_rgb(0xF5, 0xC0, 0x40)
-        } else if t > 0.4_f32 {
-            BG
-        } else {
-            INK
-        };
+        if is_updating {
+            let _ = bui.add_enabled(
+                false,
+                egui::Button::new(RichText::new(if ko { "⏳ 업데이트 중..." } else { "⏳ Updating..." }).font(mono(11.0_f32)).color(Color32::from_rgb(0xF5, 0xC0, 0x40)))
+                    .fill(Color32::from_rgb(0x35, 0x22, 0x05))
+                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(0xE5, 0xA0, 0x20)))
+                    .corner_radius(4.0_f32)
+                    .min_size(vec2(btn_rect.width(), btn_h)),
+            );
+        } else if has_new_update {
+            // Smart One-Click Update: direct update button right on the card!
+            let lat_ver = self.updater.latest_version(&e.meta.id).unwrap_or_default();
+            let gap = 5.0_f32;
+            let run_w = 34.0_f32;
+            let upd_w = btn_rect.width() - run_w - gap;
 
-        let open_btn = bui.add_enabled(
-            !is_updating,
-            egui::Button::new(RichText::new(btn_label).font(mono(11.0_f32)).strong().color(fg))
-                .fill(fill)
-                .stroke(Stroke::new(1.0_f32, if is_updating { Color32::from_rgb(0xE5, 0xA0, 0x20) } else { lerp(LINE, accent, t) }))
-                .corner_radius(4.0_f32)
-                .min_size(vec2(btn_rect.width(), btn_h)),
-        );
-        if open_btn.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-            actions.push(Action::Open(i));
+            let upd_lbl = if ko { format!("🔄 v{lat_ver} 업데이트") } else { format!("🔄 Update v{lat_ver}") };
+            let upd_btn = bui.add(
+                egui::Button::new(RichText::new(upd_lbl).font(mono(10.5_f32)).strong().color(Color32::from_rgb(0x18, 0x12, 0x05)))
+                    .fill(Color32::from_rgb(0xF5, 0xC0, 0x40))
+                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(0xFF, 0xD4, 0x60)))
+                    .corner_radius(4.0_f32)
+                    .min_size(vec2(upd_w, btn_h)),
+            );
+            if upd_btn.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(if ko { "원클릭으로 최신 버전 업데이트" } else { "One-click update to latest version" }).clicked() {
+                actions.push(Action::Update(i));
+            }
+
+            bui.add_space(gap);
+
+            let run_btn = bui.add(
+                egui::Button::new(RichText::new("▶").font(mono(12.0_f32)).strong().color(INK))
+                    .fill(Color32::from_rgb(0x18, 0x18, 0x1C))
+                    .stroke(Stroke::new(1.0_f32, LINE))
+                    .corner_radius(4.0_f32)
+                    .min_size(vec2(run_w, btn_h)),
+            );
+            if run_btn.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(if ko { "현재 버전으로 실행" } else { "Run current version" }).clicked() {
+                actions.push(Action::Open(i));
+            }
+        } else {
+            // Normal Launch button
+            let fill = lerp(Color32::from_rgb(0x18, 0x18, 0x1C), accent, t);
+            let fg = if t > 0.4_f32 { BG } else { INK };
+            let btn_label = if ko { "▶  실행" } else { "▶  LAUNCH" };
+
+            let open_btn = bui.add(
+                egui::Button::new(RichText::new(btn_label).font(mono(11.0_f32)).strong().color(fg))
+                    .fill(fill)
+                    .stroke(Stroke::new(1.0_f32, lerp(LINE, accent, t)))
+                    .corner_radius(4.0_f32)
+                    .min_size(vec2(btn_rect.width(), btn_h)),
+            );
+            if open_btn.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                actions.push(Action::Open(i));
+            }
         }
     }
 
@@ -942,56 +1027,102 @@ impl Launcher {
             .open(&mut open)
             .collapsible(false)
             .resizable(true)
-            .default_width(680.0_f32)
+            .default_width(700.0_f32)
             .anchor(Align2::CENTER_CENTER, vec2(0.0_f32, 0.0_f32))
             .frame(Frame::window(&ctx.style()).inner_margin(Margin::same(18)))
             .show(ctx, |ui| {
                 ui.set_max_width(720.0_f32);
                 let desc = if ko {
-                    "공식 최신 릴리스로 각 프로그램을 최신 버전으로 안전하게 업데이트합니다. \
-                     사용자가 작업한 파일(SavedFiles)과 개인 설정은 안전하게 보존됩니다."
+                    "3M 스타일 동일 위치 대체(In-place Replace) 방식으로 최신 버전으로 교체합니다. \
+                     사용자가 작업한 파일(SavedFiles)과 개인 설정은 100% 안전하게 유지됩니다."
                 } else {
-                    "Updates your programs to the latest official releases. \
-                     Your projects and files in SavedFiles are safely preserved."
+                    "In-place replacements update apps safely to latest releases. \
+                     Your projects and files in SavedFiles are 100% preserved."
                 };
                 ui.label(RichText::new(desc).size(12.0_f32).color(MUTED));
                 ui.add_space(10.0_f32);
 
+                let upd_count = self.available_update_count();
+                let is_upd_all = self.updater.has_active_updates();
+
+                // Top Smart Banner & Bulk Action Bar
+                if upd_count > 0 {
+                    Frame::new()
+                        .fill(Color32::from_rgb(0x2A, 0x1F, 0x0A))
+                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(0xD4, 0x90, 0x1A)))
+                        .corner_radius(6.0_f32)
+                        .inner_margin(Margin::symmetric(14, 10))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("⚡").size(18.0_f32));
+                                let sum_txt = if ko {
+                                    format!("새로운 업데이트 {upd_count}개가 발견되었습니다! 아래 버튼으로 한 번에 적용할 수 있습니다.")
+                                } else {
+                                    format!("{upd_count} update(s) ready to install. Update all with one click.")
+                                };
+                                ui.label(RichText::new(sum_txt).font(mono(11.0_f32)).color(Color32::from_rgb(0xF5, 0xC0, 0x40)));
+
+                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                    let all_lbl = if is_upd_all {
+                                        if ko { "⏳ 일괄 업데이트 중...".to_string() } else { "⏳ Updating...".to_string() }
+                                    } else if ko {
+                                        format!("⚡ 전체 일괄 업데이트 ({upd_count})")
+                                    } else {
+                                        format!("⚡ Update All ({upd_count})")
+                                    };
+                                    let btn = egui::Button::new(RichText::new(all_lbl).font(mono(11.0_f32)).strong().color(Color32::from_rgb(0x18, 0x12, 0x05)))
+                                        .fill(Color32::from_rgb(0xF5, 0xC0, 0x40))
+                                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(0xFF, 0xD4, 0x60)))
+                                        .corner_radius(4.0_f32);
+                                    if ui.add_enabled(!is_upd_all, btn).clicked() {
+                                        actions.push(Action::UpdateAll);
+                                    }
+                                });
+                            });
+                        });
+                } else {
+                    Frame::new()
+                        .fill(Color32::from_rgb(0x0C, 0x22, 0x16))
+                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(0x1E, 0x54, 0x38)))
+                        .corner_radius(6.0_f32)
+                        .inner_margin(Margin::symmetric(14, 10))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("✔").size(16.0_f32).color(OK));
+                                let all_ok = if ko {
+                                    "모든 프로그램이 최신 상태로 유지되고 있습니다. 일일이 확인할 필요가 없습니다."
+                                } else {
+                                    "All programs are completely up to date. No manual action required."
+                                };
+                                ui.label(RichText::new(all_ok).font(mono(11.0_f32)).color(Color32::from_rgb(0xA0, 0xE8, 0xC0)));
+                            });
+                        });
+                }
+
+                ui.add_space(8.0_f32);
                 ui.horizontal(|ui| {
                     let chk_lbl = if self.updater.is_checking {
                         if ko { "⏳ 최신 정보 확인 중..." } else { "⏳ Checking for updates..." }
                     } else if ko {
-                        "🔄 최신 버전 정보 확인"
+                        "🔄 최신 버전 정보 새로고침"
                     } else {
-                        "🔄 Check for Updates"
+                        "🔄 Refresh Version Info"
                     };
-                    if ui.add_enabled(!self.updater.is_checking, egui::Button::new(RichText::new(chk_lbl).font(mono(10.5_f32)))).clicked() {
+                    if ui.add_enabled(!self.updater.is_checking, egui::Button::new(RichText::new(chk_lbl).font(mono(10.0_f32)))).clicked() {
                         actions.push(Action::CheckUpdates);
-                    }
-
-                    let is_upd_all = self.updater.has_active_updates();
-                    let all_lbl = if is_upd_all {
-                        if ko { "⏳ 일괄 업데이트 진행 중..." } else { "⏳ Updating..." }
-                    } else if ko {
-                        "⚡ 전체 프로그램 일괄 업데이트"
-                    } else {
-                        "⚡ Update All Apps"
-                    };
-                    if ui.add_enabled(!is_upd_all, egui::Button::new(RichText::new(all_lbl).font(mono(10.5_f32)).color(Color32::from_rgb(0xF5, 0xC0, 0x40)))).clicked() {
-                        actions.push(Action::UpdateAll);
                     }
                 });
 
-                ui.add_space(12.0_f32);
+                ui.add_space(10.0_f32);
                 ui.separator();
-                ui.add_space(8.0_f32);
+                ui.add_space(6.0_f32);
 
-                ScrollArea::vertical().max_height(420.0_f32).show(ui, |ui| {
+                ScrollArea::vertical().max_height(380.0_f32).show(ui, |ui| {
                     egui::Grid::new("update_table")
                         .striped(true)
                         .num_columns(6)
                         .spacing(vec2(16.0_f32, 8.0_f32))
-                        .min_row_height(28.0_f32)
+                        .min_row_height(30.0_f32)
                         .show(ui, |ui| {
                             let headers = if ko {
                                 ["#", "프로그램", "현재 버전", "최신 버전", "상태", "동작"]
@@ -1012,30 +1143,44 @@ impl Launcher {
 
                                 let latest = self.updater.latest_version(&e.meta.id);
                                 let latest_str = latest.as_deref().unwrap_or("—");
-                                ui.label(RichText::new(format!("v{latest_str}")).font(mono(10.5_f32)).color(Color32::from_rgb(0xD8, 0xD8, 0xE0)));
-
                                 let is_updating = self.updater.is_updating(&e.meta.id);
+
+                                let has_update = if let (Some(cur), Some(lat)) = (e.version.as_deref(), latest.as_deref()) {
+                                    crate::updater::is_newer(lat, cur)
+                                } else {
+                                    false
+                                };
+
+                                if has_update {
+                                    ui.label(RichText::new(format!("v{latest_str}")).font(mono(10.5_f32)).strong().color(Color32::from_rgb(0xF5, 0xC0, 0x40)));
+                                } else {
+                                    ui.label(RichText::new(format!("v{latest_str}")).font(mono(10.5_f32)).color(DIM));
+                                }
+
                                 if is_updating {
                                     ui.label(RichText::new(if ko { "⏳ 업데이트 중..." } else { "⏳ Updating..." }).font(mono(10.0_f32)).color(Color32::from_rgb(0xF5, 0xC0, 0x40)));
-                                } else if let (Some(cur), Some(lat)) = (e.version.as_deref(), latest.as_deref()) {
-                                    if crate::updater::is_newer(lat, cur) {
-                                        ui.label(RichText::new(if ko { "⚡ 업데이트 가능" } else { "⚡ Available" }).font(mono(10.0_f32)).color(Color32::from_rgb(0xF5, 0xC0, 0x40)));
-                                    } else {
-                                        ui.label(RichText::new(if ko { "✔ 최신 상태" } else { "✔ Up to date" }).font(mono(10.0_f32)).color(OK));
-                                    }
+                                } else if has_update {
+                                    ui.label(RichText::new(if ko { "⚡ 업데이트 가능" } else { "⚡ Available" }).font(mono(10.0_f32)).strong().color(Color32::from_rgb(0xF5, 0xC0, 0x40)));
+                                } else if latest.is_some() {
+                                    ui.label(RichText::new(if ko { "✔ 최신 상태" } else { "✔ Up to date" }).font(mono(10.0_f32)).color(OK));
                                 } else {
                                     ui.label(RichText::new(if ko { "확인 대기" } else { "Ready" }).font(mono(10.0_f32)).color(DIM));
                                 }
 
-                                let btn_txt = if is_updating {
-                                    if ko { "업데이트 중" } else { "Updating" }
-                                } else if ko {
-                                    "🔄 지금 업데이트"
+                                if is_updating {
+                                    let _ = ui.add_enabled(false, egui::Button::new(RichText::new(if ko { "진행 중" } else { "Updating" }).font(mono(10.0_f32))));
+                                } else if has_update {
+                                    let btn = egui::Button::new(RichText::new(if ko { "⚡ 지금 업데이트" } else { "⚡ Update" }).font(mono(10.0_f32)).strong().color(Color32::from_rgb(0x18, 0x12, 0x05)))
+                                        .fill(Color32::from_rgb(0xF5, 0xC0, 0x40))
+                                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(0xFF, 0xD4, 0x60)));
+                                    if ui.add(btn).clicked() {
+                                        actions.push(Action::Update(idx));
+                                    }
                                 } else {
-                                    "🔄 Update"
-                                };
-                                if ui.add_enabled(!is_updating, egui::Button::new(RichText::new(btn_txt).font(mono(10.0_f32)))).clicked() {
-                                    actions.push(Action::Update(idx));
+                                    let _ = ui.add_enabled(
+                                        false,
+                                        egui::Button::new(RichText::new(if ko { "✔ 완료" } else { "✔ Done" }).font(mono(10.0_f32)).color(DIM)),
+                                    );
                                 }
                                 ui.end_row();
                             }

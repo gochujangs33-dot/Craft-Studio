@@ -9,7 +9,9 @@ param(
     [Parameter(Mandatory=$true)]
     [string]$DestDir,
 
-    [string]$Arch = "x64"
+    [string]$Arch = "x64",
+
+    [string]$SuiteRepo = "gochujangs33-dot/Craft-Studio"
 )
 
 $ErrorActionPreference = "Stop"
@@ -22,26 +24,54 @@ if (-not (Test-Path $DestDir)) {
     New-Item -ItemType Directory -Force $DestDir | Out-Null
 }
 
-$repoPath = ($RepoUrl -replace '^https://github.com/', '')
 $headers = @{ "User-Agent" = "ArtCraftStudio-Updater" }
+$asset = $null
+$latestTag = "latest"
 
-try {
-    $rel = Invoke-RestMethod "https://api.github.com/repos/$repoPath/releases/latest" -Headers $headers -TimeoutSec 15
-} catch {
-    Write-Error "Failed to fetch release info from GitHub: $_"
-    exit 1
+# 1. First check user's suite repo (https://github.com/gochujangs33-dot/Craft-Studio/releases)
+if ($SuiteRepo) {
+    try {
+        $suiteRel = Invoke-RestMethod "https://api.github.com/repos/$SuiteRepo/releases/latest" -Headers $headers -TimeoutSec 10
+        if ($suiteRel -and $suiteRel.assets) {
+            # Look for app-specific asset like photocraft-*.zip or photocraft.zip
+            $suiteAsset = $suiteRel.assets | Where-Object { 
+                $_.name -like "$AppId-*.zip" -or $_.name -like "$AppId.zip" -or $_.name -like "$AppId-windows*.zip"
+            } | Select-Object -First 1
+
+            if ($suiteAsset) {
+                Write-Host "Found custom $AppId update asset in $SuiteRepo: $($suiteAsset.name)"
+                $asset = $suiteAsset
+                # Extract version from asset name or release tag
+                if ($suiteAsset.name -match "$AppId-([0-9\.]+)") {
+                    $latestTag = $matches[1]
+                } else {
+                    $latestTag = ($suiteRel.tag_name -replace '^v', '')
+                }
+            }
+        }
+    } catch {
+        # ignore and fallback to upstream repo
+    }
 }
 
-$latestTag = $rel.tag_name -replace '^v', ''
-$asset = $rel.assets | Where-Object { $_.name -like "*-windows-$Arch-portable.zip" } | Select-Object -First 1
-
+# 2. Fallback to upstream official repo (storytold/<id>)
 if (-not $asset) {
-    # Fallback: check for any windows zip
-    $asset = $rel.assets | Where-Object { $_.name -like "*windows*.zip" } | Select-Object -First 1
+    $repoPath = ($RepoUrl -replace '^https://github.com/', '')
+    try {
+        $rel = Invoke-RestMethod "https://api.github.com/repos/$repoPath/releases/latest" -Headers $headers -TimeoutSec 15
+        $latestTag = $rel.tag_name -replace '^v', ''
+        $asset = $rel.assets | Where-Object { $_.name -like "*-windows-$Arch-portable.zip" } | Select-Object -First 1
+        if (-not $asset) {
+            $asset = $rel.assets | Where-Object { $_.name -like "*windows*.zip" } | Select-Object -First 1
+        }
+    } catch {
+        Write-Error "Failed to fetch release info from GitHub: $_"
+        exit 1
+    }
 }
 
 if (-not $asset) {
-    Write-Error "No Windows portable asset found in latest release ($latestTag)"
+    Write-Error "No Windows portable asset found for $AppId"
     exit 2
 }
 
