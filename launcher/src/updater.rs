@@ -7,6 +7,20 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+/// Creates a completely silent background process with no console window popping up
+fn silent_command(program: &str) -> Command {
+    let mut cmd = Command::new(program);
+    #[cfg(windows)]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    cmd
+}
+
 pub const UPDATE_SCRIPT: &str = include_str!("../../scripts/update-app.ps1");
 
 pub struct UpdateManager {
@@ -93,7 +107,7 @@ impl UpdateManager {
     }
 
     /// Checks GitHub Releases & version.json for all 13 apps in a background thread
-    pub fn check_all_updates(&mut self, repos: Vec<(String, String)>) {
+    pub fn check_all_updates(&mut self, _repos: Vec<(String, String)>) {
         if self.is_checking {
             return;
         }
@@ -137,7 +151,7 @@ impl UpdateManager {
                  foreach ($k in $results.Keys) {{ \"$k=$($results[$k])\" }}"
             );
 
-            let output = Command::new("powershell")
+            let output = silent_command("powershell")
                 .args(["-NoProfile", "-NonInteractive", "-Command", &ps_script])
                 .output()
                 .ok()
@@ -158,32 +172,6 @@ impl UpdateManager {
                 for (id, ver) in &gathered {
                     map.insert(id.clone(), ver.clone());
                     found += 1;
-                }
-            }
-
-            // For any remaining apps not found in suite repo, fallback to official upstream repos
-            for (id, repo) in &repos {
-                if !gathered.contains_key(id) {
-                    let repo_path = repo.trim_start_matches("https://github.com/").to_string();
-                    let ps_fallback = format!(
-                        "$ProgressPreference = 'SilentlyContinue'; \
-                         try {{ \
-                             $r = Invoke-RestMethod 'https://api.github.com/repos/{repo_path}/releases/latest' -Headers @{{ 'User-Agent' = 'ArtCraftStudio' }} -TimeoutSec 4; \
-                             $r.tag_name -replace '^v','' \
-                         }} catch {{ '' }}"
-                    );
-                    if let Ok(out) = Command::new("powershell")
-                        .args(["-NoProfile", "-NonInteractive", "-Command", &ps_fallback])
-                        .output()
-                    {
-                        let tag = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                        if !tag.is_empty() {
-                            if let Ok(mut map) = latest_store.lock() {
-                                map.insert(id.clone(), tag);
-                                found += 1;
-                            }
-                        }
-                    }
                 }
             }
 
@@ -216,7 +204,7 @@ impl UpdateManager {
             let script_str = script_path.display().to_string();
             let dest_str = dest_dir.display().to_string();
 
-            let status = Command::new("powershell")
+            let status = silent_command("powershell")
                 .args([
                     "-NoProfile",
                     "-ExecutionPolicy",
