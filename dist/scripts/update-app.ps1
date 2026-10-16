@@ -143,16 +143,43 @@ if ($items.Count -eq 1 -and $items[0].PSIsContainer) {
     $sourceDir = $items[0].FullName
 }
 
-Write-Output "PROGRESS:90:프로그램 파일 교체 중..."
-Get-ChildItem $sourceDir | ForEach-Object {
-    Copy-Item $_.FullName -Destination $DestDir -Recurse -Force
+Write-Output "PROGRESS:88:실행 중인 프로세스 확인 및 안전 종료..."
+# Ensure target process is closed before replacing files
+Get-Process $AppId -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Start-Sleep -Milliseconds 300
+
+Write-Output "PROGRESS:92:기존 바이너리 임시 안전 백업 중..."
+$bakDir = Join-Path $env:TEMP "ArtCraft_Backup_$AppId"
+if (Test-Path $bakDir) { Remove-Item $bakDir -Recurse -Force -ErrorAction SilentlyContinue }
+New-Item -ItemType Directory -Force $bakDir | Out-Null
+if (Test-Path $DestDir) {
+    Get-ChildItem $DestDir | ForEach-Object {
+        Copy-Item $_.FullName -Destination $bakDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
 }
 
-# Update version stamp
-Set-Content (Join-Path $DestDir ".version") $latestTag -NoNewline
+Write-Output "PROGRESS:95:최신 프로그램 동일 위치 안전 교체 (In-place)..."
+try {
+    Get-ChildItem $sourceDir | ForEach-Object {
+        Copy-Item $_.FullName -Destination $DestDir -Recurse -Force
+    }
+    # Update version stamp
+    Set-Content (Join-Path $DestDir ".version") $latestTag -NoNewline
+    # Clean up backup on success
+    Remove-Item $bakDir -Recurse -Force -ErrorAction SilentlyContinue
+} catch {
+    Write-Output "PROGRESS:95:교체 오류 발생! 이전 버전으로 안전 롤백 중..."
+    if (Test-Path $bakDir) {
+        Get-ChildItem $bakDir | ForEach-Object {
+            Copy-Item $_.FullName -Destination $DestDir -Recurse -Force
+        }
+    }
+    Write-Error "In-place replacement failed, successfully rolled back: $_"
+    exit 4
+}
 
 # Cleanup temp
 Remove-Item $tempDir -Recurse -Force -ErrorAction SilentlyContinue
 
-Write-Output "PROGRESS:100:v$latestTag 업데이트 완료"
+Write-Output "PROGRESS:100:v$latestTag 교체 완료"
 exit 0

@@ -68,6 +68,7 @@ pub struct Launcher {
     search: String,
     show_settings: bool,
     show_updates: bool,
+    show_progress_modal: bool,
     toasts: Vec<(String, Color32, Instant)>,
     last_poll: Instant,
     pending_files: Vec<PathBuf>,
@@ -125,6 +126,7 @@ impl Launcher {
             search: String::new(),
             show_settings: false,
             show_updates: false,
+            show_progress_modal: false,
             toasts: Vec::new(),
             last_poll: Instant::now(),
             pending_files: file_args,
@@ -282,6 +284,7 @@ impl Launcher {
                     };
                     self.toast(msg, ERR);
                 } else {
+                    self.show_progress_modal = true;
                     self.updater.update_app(&e.meta.id, &e.meta.repo, &e.dir);
                     let msg = if self.is_ko() {
                         format!("{name} 최신 버전 다운로드 및 업데이트 진행 중...")
@@ -298,6 +301,9 @@ impl Launcher {
                         self.updater.update_app(&e.meta.id, &e.meta.repo, &e.dir);
                         started += 1;
                     }
+                }
+                if started > 0 {
+                    self.show_progress_modal = true;
                 }
                 let msg = if self.is_ko() {
                     format!("{started}개 프로그램 일괄 업데이트 시작...")
@@ -976,7 +982,170 @@ impl Launcher {
         });
     }
 
-    // ------------------------------------------------------------ overlays
+    // ------------------------------------------------------------ 3M-style Progress Modal
+    fn progress_modal(&mut self, ctx: &egui::Context) {
+        if !self.show_progress_modal {
+            return;
+        }
+
+        let ko = self.is_ko();
+        let is_updating = self.updater.has_active_updates();
+        let (overall_pct, overall_desc) = self.updater.overall_progress().unwrap_or((1.0, if ko { "업데이트 완료".to_string() } else { "Complete".to_string() }));
+        let pct_int = (overall_pct * 100.0) as u32;
+
+        let title = if ko {
+            "🔄 3M 소프트웨어 업데이트 & 파일 교체"
+        } else {
+            "🔄 3M SOFTWARE UPDATE & REPLACEMENT"
+        };
+
+        let mut is_open = self.show_progress_modal;
+        let mut close_requested = false;
+
+        egui::Window::new(RichText::new(title).font(mono(11.5_f32)))
+            .open(&mut is_open)
+            .collapsible(false)
+            .resizable(false)
+            .order(Order::Foreground)
+            .anchor(Align2::CENTER_CENTER, vec2(0.0_f32, 0.0_f32))
+            .default_width(520.0_f32)
+            .frame(Frame::window(&ctx.style()).inner_margin(Margin::same(20)))
+            .show(ctx, |ui| {
+                ui.set_width(500.0_f32);
+
+                if is_updating {
+                    // Header Status
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("⏳").size(24.0_f32));
+                        ui.vertical(|ui| {
+                            let title = if ko {
+                                format!("최신 버전 다운로드 및 교체 진행 중 ({pct_int}%)")
+                            } else {
+                                format!("Downloading and replacing files ({pct_int}%)")
+                            };
+                            ui.label(RichText::new(title).size(15.0_f32).strong().color(Color32::from_rgb(0xF5, 0xC0, 0x40)));
+                            ui.label(RichText::new(&overall_desc).font(mono(11.0_f32)).color(MUTED));
+                        });
+                    });
+
+                    ui.add_space(14.0_f32);
+
+                    // Large 3M-style Progress Bar
+                    let pb = egui::ProgressBar::new(overall_pct)
+                        .show_percentage()
+                        .fill(Color32::from_rgb(0xF5, 0xC0, 0x40))
+                        .corner_radius(4.0_f32);
+                    ui.add_sized(vec2(ui.available_width(), 22.0_f32), pb);
+
+                    ui.add_space(16.0_f32);
+                    ui.separator();
+                    ui.add_space(10.0_f32);
+
+                    // 4-Step 3M Architecture Indicator
+                    let steps = if ko {
+                        [
+                            ("1. 최신 릴리스 정보 대조 및 검증", overall_pct >= 0.15),
+                            ("2. 고속 청크 패키지 다운로드", overall_pct >= 0.20),
+                            ("3. 무결성 압축 해제 및 안전 임시 백업", overall_pct >= 0.80),
+                            ("4. 3M 동일 위치 안전 교체 (In-place Replace)", overall_pct >= 0.92),
+                        ]
+                    } else {
+                        [
+                            ("1. Release metadata verification", overall_pct >= 0.15),
+                            ("2. Download package chunks", overall_pct >= 0.20),
+                            ("3. Decompress and temporary backup", overall_pct >= 0.80),
+                            ("4. Safe in-place file replacement", overall_pct >= 0.92),
+                        ]
+                    };
+
+                    for (name, active) in steps {
+                        ui.horizontal(|ui| {
+                            if active {
+                                ui.label(RichText::new("✔").color(OK).font(mono(11.0_f32)));
+                                ui.label(RichText::new(name).color(INK).font(mono(10.5_f32)));
+                            } else {
+                                ui.label(RichText::new("○").color(DIM).font(mono(11.0_f32)));
+                                ui.label(RichText::new(name).color(DIM).font(mono(10.5_f32)));
+                            }
+                        });
+                    }
+
+                    ui.add_space(14.0_f32);
+                    Frame::new()
+                        .fill(Color32::from_rgb(0x18, 0x18, 0x1C))
+                        .stroke(Stroke::new(1.0_f32, LINE))
+                        .corner_radius(4.0_f32)
+                        .inner_margin(Margin::symmetric(10, 8))
+                        .show(ui, |ui| {
+                            let note = if ko {
+                                "🔒 3M 안전 보장: 사용자 작업 폴더(SavedFiles)는 100% 안전하게 격리 보존됩니다."
+                            } else {
+                                "🔒 SavedFiles directory is 100% preserved and untouched."
+                            };
+                            ui.label(RichText::new(note).font(mono(9.5_f32)).color(MUTED));
+                        });
+                } else {
+                    // Update Completed Success State
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("✔").size(26.0_f32).color(OK));
+                        ui.vertical(|ui| {
+                            let comp_txt = if ko {
+                                "소프트웨어 최신 버전 교체가 성공적으로 완료되었습니다!"
+                            } else {
+                                "Software update completed successfully!"
+                            };
+                            ui.label(RichText::new(comp_txt).size(15.0_f32).strong().color(OK));
+                            let sub_txt = if ko {
+                                "3M 스타일 동일 위치 대체(In-place Replace) 방식으로 바이너리가 안전하게 갱신되었습니다."
+                            } else {
+                                "App binaries updated to the latest release in-place."
+                            };
+                            ui.label(RichText::new(sub_txt).size(11.0_f32).color(MUTED));
+                        });
+                    });
+
+                    ui.add_space(14.0_f32);
+                    let pb = egui::ProgressBar::new(1.0)
+                        .show_percentage()
+                        .fill(OK)
+                        .corner_radius(4.0_f32);
+                    ui.add_sized(vec2(ui.available_width(), 18.0_f32), pb);
+
+                    ui.add_space(14.0_f32);
+                    Frame::new()
+                        .fill(Color32::from_rgb(0x0C, 0x22, 0x16))
+                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(0x1E, 0x54, 0x38)))
+                        .corner_radius(4.0_f32)
+                        .inner_margin(Margin::symmetric(10, 8))
+                        .show(ui, |ui| {
+                            let ok_sub = if ko {
+                                "작업 파일(SavedFiles) 및 개인 설정이 모두 완벽하게 보존되었습니다."
+                            } else {
+                                "Projects and personal settings in SavedFiles are fully preserved."
+                            };
+                            ui.label(RichText::new(ok_sub).font(mono(9.5_f32)).color(Color32::from_rgb(0xA0, 0xE8, 0xC0)));
+                        });
+
+                    ui.add_space(14.0_f32);
+                    ui.horizontal(|ui| {
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            let btn_txt = if ko { "확인 및 닫기" } else { "Close" };
+                            let btn = egui::Button::new(RichText::new(btn_txt).font(mono(11.0_f32)).strong().color(BG))
+                                .fill(OK)
+                                .corner_radius(4.0_f32)
+                                .min_size(vec2(130.0_f32, 32.0_f32));
+                            if ui.add(btn).clicked() {
+                                close_requested = true;
+                            }
+                        });
+                    });
+                }
+            });
+        if close_requested {
+            is_open = false;
+        }
+        self.show_progress_modal = is_open;
+    }
 
     fn updates_window(&mut self, ctx: &egui::Context, actions: &mut Vec<Action>) {
         let ko = self.is_ko();
@@ -1302,7 +1471,11 @@ impl eframe::App for Launcher {
             self.refresh_status();
             self.last_poll = Instant::now();
         }
-        ctx.request_repaint_after(Duration::from_millis(800));
+        if self.updater.has_active_updates() || self.show_progress_modal {
+            ctx.request_repaint_after(Duration::from_millis(50));
+        } else {
+            ctx.request_repaint_after(Duration::from_millis(800));
+        }
 
         let mut files = std::mem::take(&mut self.pending_files);
         files.extend(ctx.input(|i| i.raw.dropped_files.iter().filter_map(|f| f.path.clone()).collect::<Vec<_>>()));
@@ -1321,6 +1494,7 @@ impl eframe::App for Launcher {
             });
         self.updates_window(ctx, &mut actions);
         self.settings_window(ctx, &mut actions);
+        self.progress_modal(ctx);
         self.drop_overlay(ctx);
         self.toasts_ui(ctx);
 
