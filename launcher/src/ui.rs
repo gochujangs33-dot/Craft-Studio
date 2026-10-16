@@ -493,61 +493,66 @@ impl Launcher {
                 .fill(banner_bg)
                 .stroke(banner_stroke)
                 .corner_radius(6.0_f32)
-                .inner_margin(Margin::symmetric(14, 10))
+                .inner_margin(Margin::symmetric(14, 7))
                 .show(ui, |ui| {
                     if is_updating {
                         let (pct, desc) = self.updater.overall_progress().unwrap_or((0.15, if ko { "업데이트 진행 중...".to_string() } else { "Updating...".to_string() }));
                         let pct_100 = (pct * 100.0) as u32;
 
-                        ui.vertical(|ui| {
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new("⏳").size(16.0_f32));
-                                let msg = if ko {
-                                    format!("소프트웨어 업데이트 진행 중 ({pct_100}%) · {desc}")
-                                } else {
-                                    format!("Updating software ({pct_100}%) · {desc}")
-                                };
-                                ui.label(RichText::new(msg).font(mono(11.0_f32)).strong().color(Color32::from_rgb(0xF5, 0xC0, 0x40)));
-                            });
-                            ui.add_space(5.0_f32);
+                        ui.horizontal_centered(|ui| {
+                            ui.label(RichText::new("⏳").size(15.0_f32));
+                            let msg = if ko {
+                                format!("소프트웨어 업데이트 진행 중 ({pct_100}%) · {desc}")
+                            } else {
+                                format!("Updating software ({pct_100}%) · {desc}")
+                            };
+                            ui.label(RichText::new(msg).font(mono(11.0_f32)).strong().color(Color32::from_rgb(0xF5, 0xC0, 0x40)));
+
+                            ui.add_space(8.0_f32);
                             let pb = egui::ProgressBar::new(pct)
                                 .show_percentage()
                                 .fill(Color32::from_rgb(0xF5, 0xC0, 0x40))
                                 .corner_radius(3.0_f32);
-                            ui.add(pb);
+                            ui.add_sized(vec2(160.0_f32, 16.0_f32), pb);
+
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                if chip(ui, if ko { "3M 팝업 열기" } else { "Open Dialog" }, false, false).clicked() {
+                                    self.show_progress_modal = true;
+                                }
+                            });
                         });
                     } else {
-                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            if chip(ui, if ko { "상세 보기" } else { "Details" }, false, false).clicked() {
-                                self.show_updates = true;
-                            }
-
-                            let btn_lbl = if ko {
-                                format!("⚡ 지금 전체 자동 업데이트 ({upd_count})")
+                        ui.horizontal_centered(|ui| {
+                            ui.label(RichText::new("💡").size(15.0_f32));
+                            let msg = if ko {
+                                format!("{upd_count}개의 새로운 소프트웨어 업데이트가 있습니다.")
                             } else {
-                                format!("⚡ Update All ({upd_count})")
+                                format!("{upd_count} new software update(s) available.")
                             };
-                            let btn = egui::Button::new(RichText::new(btn_lbl).font(mono(11.0_f32)).strong().color(Color32::from_rgb(0x18, 0x12, 0x05)))
-                                .fill(Color32::from_rgb(0xF5, 0xC0, 0x40))
-                                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(0xFF, 0xD4, 0x60)))
-                                .corner_radius(4.0_f32);
-                            if ui.add(btn).clicked() {
-                                actions.push(Action::UpdateAll);
-                            }
+                            ui.label(RichText::new(msg).font(mono(11.0_f32)).color(Color32::from_rgb(0xF5, 0xC0, 0x40)));
 
-                            ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                                ui.label(RichText::new("💡").size(15.0_f32));
-                                let msg = if ko {
-                                    format!("{upd_count}개의 새로운 소프트웨어 업데이트가 있습니다.")
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                if chip(ui, if ko { "상세 보기" } else { "Details" }, false, false).clicked() {
+                                    self.show_progress_modal = true;
+                                }
+
+                                let btn_lbl = if ko {
+                                    format!("⚡ 지금 전체 자동 업데이트 ({upd_count})")
                                 } else {
-                                    format!("{upd_count} new software update(s) available.")
+                                    format!("⚡ Update All ({upd_count})")
                                 };
-                                ui.label(RichText::new(msg).font(mono(11.0_f32)).color(Color32::from_rgb(0xF5, 0xC0, 0x40)));
+                                let btn = egui::Button::new(RichText::new(btn_lbl).font(mono(10.5_f32)).strong().color(Color32::from_rgb(0x18, 0x12, 0x05)))
+                                    .fill(Color32::from_rgb(0xF5, 0xC0, 0x40))
+                                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(0xFF, 0xD4, 0x60)))
+                                    .corner_radius(4.0_f32);
+                                if ui.add(btn).clicked() {
+                                    actions.push(Action::UpdateAll);
+                                }
                             });
                         });
                     }
                 });
-            ui.add_space(10.0_f32);
+            ui.add_space(8.0_f32);
         }
 
         ui.horizontal(|ui| {
