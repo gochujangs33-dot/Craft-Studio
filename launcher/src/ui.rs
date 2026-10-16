@@ -487,17 +487,28 @@ impl Launcher {
                 .fill(banner_bg)
                 .stroke(banner_stroke)
                 .corner_radius(6.0_f32)
-                .inner_margin(Margin::symmetric(14, 8))
+                .inner_margin(Margin::symmetric(14, 10))
                 .show(ui, |ui| {
                     if is_updating {
-                        ui.horizontal(|ui| {
-                            ui.label(RichText::new("⏳").size(15.0_f32));
-                            let msg = if ko {
-                                "프로그램을 최신 버전으로 안전하게 업데이트하는 중입니다..."
-                            } else {
-                                "Updating apps to the latest versions in background..."
-                            };
-                            ui.label(RichText::new(msg).font(mono(11.0_f32)).color(Color32::from_rgb(0xF5, 0xC0, 0x40)));
+                        let (pct, desc) = self.updater.overall_progress().unwrap_or((0.15, if ko { "업데이트 진행 중...".to_string() } else { "Updating...".to_string() }));
+                        let pct_100 = (pct * 100.0) as u32;
+
+                        ui.vertical(|ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("⏳").size(16.0_f32));
+                                let msg = if ko {
+                                    format!("소프트웨어 업데이트 진행 중 ({pct_100}%) · {desc}")
+                                } else {
+                                    format!("Updating software ({pct_100}%) · {desc}")
+                                };
+                                ui.label(RichText::new(msg).font(mono(11.0_f32)).strong().color(Color32::from_rgb(0xF5, 0xC0, 0x40)));
+                            });
+                            ui.add_space(5.0_f32);
+                            let pb = egui::ProgressBar::new(pct)
+                                .show_percentage()
+                                .fill(Color32::from_rgb(0xF5, 0xC0, 0x40))
+                                .corner_radius(3.0_f32);
+                            ui.add(pb);
                         });
                     } else {
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -1111,7 +1122,9 @@ impl Launcher {
                                 }
 
                                 if is_updating {
-                                    ui.label(RichText::new(if ko { "⏳ 업데이트 중..." } else { "⏳ Updating..." }).font(mono(10.0_f32)).color(Color32::from_rgb(0xF5, 0xC0, 0x40)));
+                                    let (p, desc) = self.updater.get_progress(&e.meta.id).unwrap_or((0.15, if ko { "업데이트 중...".to_string() } else { "Updating...".to_string() }));
+                                    let pct_val = (p * 100.0) as u32;
+                                    ui.label(RichText::new(format!("⏳ {pct_val}% · {desc}")).font(mono(10.0_f32)).color(Color32::from_rgb(0xF5, 0xC0, 0x40)));
                                 } else if has_update {
                                     ui.label(RichText::new(if ko { "⚡ 업데이트 가능" } else { "⚡ Available" }).font(mono(10.0_f32)).strong().color(Color32::from_rgb(0xF5, 0xC0, 0x40)));
                                 } else if latest.is_some() {
@@ -1121,7 +1134,11 @@ impl Launcher {
                                 }
 
                                 if is_updating {
-                                    let _ = ui.add_enabled(false, egui::Button::new(RichText::new(if ko { "진행 중" } else { "Updating" }).font(mono(10.0_f32))));
+                                    let p = self.updater.get_progress(&e.meta.id).map(|(v, _)| v).unwrap_or(0.15);
+                                    let pb = egui::ProgressBar::new(p)
+                                        .show_percentage()
+                                        .fill(Color32::from_rgb(0xF5, 0xC0, 0x40));
+                                    ui.add_sized(vec2(80.0_f32, 20.0_f32), pb);
                                 } else if has_update {
                                     let btn = egui::Button::new(RichText::new(if ko { "⚡ 지금 업데이트" } else { "⚡ Update" }).font(mono(10.0_f32)).strong().color(Color32::from_rgb(0x18, 0x12, 0x05)))
                                         .fill(Color32::from_rgb(0xF5, 0xC0, 0x40))

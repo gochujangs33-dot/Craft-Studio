@@ -29,6 +29,7 @@ pub struct UpdateManager {
     receiver: Receiver<(String, bool, String)>,
     in_progress: Arc<Mutex<HashSet<String>>>,
     latest_versions: Arc<Mutex<HashMap<String, String>>>,
+    progress: Arc<Mutex<HashMap<String, (f32, String)>>>,
     pub is_checking: bool,
 }
 
@@ -62,7 +63,27 @@ impl UpdateManager {
             receiver,
             in_progress: Arc::new(Mutex::new(HashSet::new())),
             latest_versions: Arc::new(Mutex::new(initial_versions)),
+            progress: Arc::new(Mutex::new(HashMap::new())),
             is_checking: false,
+        }
+    }
+
+    pub fn get_progress(&self, app_id: &str) -> Option<(f32, String)> {
+        self.progress.lock().ok().and_then(|m| m.get(app_id).cloned())
+    }
+
+    pub fn overall_progress(&self) -> Option<(f32, String)> {
+        if let Ok(m) = self.progress.lock() {
+            if m.is_empty() {
+                return None;
+            }
+            let count = m.len() as f32;
+            let sum_pct: f32 = m.values().map(|(p, _)| *p).sum();
+            let avg = sum_pct / count;
+            let first_desc = m.values().next().map(|(_, d)| d.clone()).unwrap_or_default();
+            Some((avg, first_desc))
+        } else {
+            None
         }
     }
 
@@ -194,7 +215,13 @@ impl UpdateManager {
         let repo_url = repo_url.to_string();
         let dest_dir = dest_dir.to_path_buf();
         let in_progress = Arc::clone(&self.in_progress);
+        let progress_store = Arc::clone(&self.progress);
         let tx = self.sender.clone();
+
+        // Initialize progress
+        if let Ok(mut map) = progress_store.lock() {
+            map.insert(app_id.clone(), (0.05, "업데이트 준비 중...".to_string()));
+        }
 
         // Ensure update script exists on disk
         let script_path = std::env::temp_dir().join("artcraft_update_app.ps1");
@@ -204,7 +231,7 @@ impl UpdateManager {
             let script_str = script_path.display().to_string();
             let dest_str = dest_dir.display().to_string();
 
-            let status = silent_command("powershell")
+            let child = silent_command("powershell")
                 .args([
                     "-NoProfile",
                     "-ExecutionPolicy",
@@ -218,16 +245,42 @@ impl UpdateManager {
                     "-DestDir",
                     &dest_str,
                 ])
-                .status();
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn();
 
-            let (success, msg) = match status {
-                Ok(s) if s.success() => (true, format!("{app_id} 최신 버전 업데이트 완료")),
-                Ok(s) => (false, format!("{app_id} 업데이트 실패 (코드: {:?})", s.code())),
-                Err(e) => (false, format!("{app_id} 업데이트 스크립트 실행 오류: {e}")),
+            let mut last_status = None;
+            if let Ok(mut proc) = child {
+                if let Some(stdout) = proc.stdout.take() {
+                    use std::io::{BufRead, BufReader};
+                    let reader = BufReader::new(stdout);
+                    for line in reader.lines().flatten() {
+                        if let Some(rest) = line.strip_prefix("PROGRESS:") {
+                            if let Some((p_str, desc)) = rest.split_once(':') {
+                                if let Ok(p_val) = p_str.parse::<f32>() {
+                                    let norm = (p_val / 100.0).clamp(0.0, 1.0);
+                                    if let Ok(mut map) = progress_store.lock() {
+                                        map.insert(app_id.clone(), (norm, desc.trim().to_string()));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                last_status = proc.wait().ok();
+            }
+
+            let (success, msg) = match last_status {
+                Some(s) if s.success() => (true, format!("{app_id} 최신 버전 업데이트 완료")),
+                Some(s) => (false, format!("{app_id} 업데이트 실패 (코드: {:?})", s.code())),
+                None => (false, format!("{app_id} 업데이트 프로세스 실행 실패")),
             };
 
             if let Ok(mut set) = in_progress.lock() {
                 set.remove(&app_id);
+            }
+            if let Ok(mut map) = progress_store.lock() {
+                map.remove(&app_id);
             }
 
             let _ = tx.send((app_id, success, msg));
