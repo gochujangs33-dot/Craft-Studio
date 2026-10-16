@@ -18,6 +18,26 @@ pub struct UpdateManager {
     pub is_checking: bool,
 }
 
+/// Compares two version strings: returns true if `remote` is strictly newer than `local`
+pub fn is_newer(remote: &str, local: &str) -> bool {
+    let parse = |s: &str| -> Vec<u32> {
+        s.trim_start_matches('v')
+            .split('.')
+            .filter_map(|p| p.parse::<u32>().ok())
+            .collect()
+    };
+    let r = parse(remote);
+    let l = parse(local);
+    for (rv, lv) in r.iter().zip(l.iter()) {
+        if rv > lv {
+            return true;
+        } else if rv < lv {
+            return false;
+        }
+    }
+    r.len() > l.len()
+}
+
 impl UpdateManager {
     pub fn new(exe_dir: PathBuf) -> Self {
         let (sender, receiver) = channel();
@@ -43,7 +63,7 @@ impl UpdateManager {
         self.latest_versions.lock().ok().and_then(|map| map.get(app_id).cloned())
     }
 
-    /// Checks GitHub Releases for all 13 apps in a background thread
+    /// Checks GitHub Releases & version.json for all 13 apps in a background thread
     pub fn check_all_updates(&mut self, repos: Vec<(String, String)>) {
         if self.is_checking {
             return;
@@ -54,31 +74,91 @@ impl UpdateManager {
 
         thread::spawn(move || {
             let mut found = 0;
-            for (id, repo) in repos {
-                let repo_path = repo.trim_start_matches("https://github.com/").to_string();
-                let ps_cmd = format!(
-                    "$ProgressPreference = 'SilentlyContinue'; \
-                     try {{ \
-                         $r = Invoke-RestMethod 'https://api.github.com/repos/{}/releases/latest' -Headers @{{ 'User-Agent' = 'ArtCraftStudio' }} -TimeoutSec 8; \
-                         $r.tag_name -replace '^v','' \
-                     }} catch {{ '' }}",
-                    repo_path
-                );
+            let suite_repo = "gochujangs33-dot/Craft-Studio";
 
-                if let Ok(output) = Command::new("powershell")
-                    .args(["-NoProfile", "-NonInteractive", "-Command", &ps_cmd])
-                    .output()
-                {
-                    let tag = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                    if !tag.is_empty() {
-                        if let Ok(mut map) = latest_store.lock() {
-                            map.insert(id.clone(), tag);
-                            found += 1;
+            // Multi-tier fast version matching (version.json + releases + upstream)
+            let ps_script = format!(
+                "$ProgressPreference = 'SilentlyContinue'; \
+                 $results = @{{}}; \
+                 \
+                 # Tier 1: Check remote version.json manifest \
+                 try {{ \
+                     $vjson = Invoke-RestMethod 'https://raw.githubusercontent.com/{suite_repo}/main/version.json' -Headers @{{ 'User-Agent' = 'ArtCraftStudio' }} -TimeoutSec 5; \
+                     if ($vjson.apps) {{ \
+                         foreach ($prop in $vjson.apps.PSObject.Properties) {{ \
+                             if ($prop.Value.version) {{ $results[$prop.Name] = $prop.Value.version -replace '^v','' }} \
+                         }} \
+                     }} \
+                 }} catch {{}} \
+                 \
+                 # Tier 2: Check GitHub Releases latest assets \
+                 try {{ \
+                     $rel = Invoke-RestMethod 'https://api.github.com/repos/{suite_repo}/releases/latest' -Headers @{{ 'User-Agent' = 'ArtCraftStudio' }} -TimeoutSec 6; \
+                     if ($rel -and $rel.assets) {{ \
+                         foreach ($a in $rel.assets) {{ \
+                             if ($a.name -match '^([a-z0-9]+)-([0-9\\.]+)') {{ \
+                                 $id = $matches[1]; $ver = $matches[2]; \
+                                 $results[$id] = $ver; \
+                             }} \
+                         }} \
+                     }} \
+                 }} catch {{}} \
+                 \
+                 # Output gathered versions as id=ver lines \
+                 foreach ($k in $results.Keys) {{ \"$k=$($results[$k])\" }}"
+            );
+
+            let output = Command::new("powershell")
+                .args(["-NoProfile", "-NonInteractive", "-Command", &ps_script])
+                .output()
+                .ok()
+                .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+                .unwrap_or_default();
+
+            let mut gathered = HashMap::new();
+            for line in output.lines() {
+                if let Some((k, v)) = line.trim().split_once('=') {
+                    if !k.is_empty() && !v.is_empty() {
+                        gathered.insert(k.to_string(), v.to_string());
+                    }
+                }
+            }
+
+            // Fill gathered versions from user suite repository
+            if let Ok(mut map) = latest_store.lock() {
+                for (id, ver) in &gathered {
+                    map.insert(id.clone(), ver.clone());
+                    found += 1;
+                }
+            }
+
+            // For any remaining apps not found in suite repo, fallback to official upstream repos
+            for (id, repo) in &repos {
+                if !gathered.contains_key(id) {
+                    let repo_path = repo.trim_start_matches("https://github.com/").to_string();
+                    let ps_fallback = format!(
+                        "$ProgressPreference = 'SilentlyContinue'; \
+                         try {{ \
+                             $r = Invoke-RestMethod 'https://api.github.com/repos/{repo_path}/releases/latest' -Headers @{{ 'User-Agent' = 'ArtCraftStudio' }} -TimeoutSec 4; \
+                             $r.tag_name -replace '^v','' \
+                         }} catch {{ '' }}"
+                    );
+                    if let Ok(out) = Command::new("powershell")
+                        .args(["-NoProfile", "-NonInteractive", "-Command", &ps_fallback])
+                        .output()
+                    {
+                        let tag = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                        if !tag.is_empty() {
+                            if let Ok(mut map) = latest_store.lock() {
+                                map.insert(id.clone(), tag);
+                                found += 1;
+                            }
                         }
                     }
                 }
             }
-            let _ = tx.send(("__check_all__".to_string(), true, format!("{found}개 프로그램 최신 정보 확인 완료")));
+
+            let _ = tx.send(("__check_all__".to_string(), true, format!("{found}개 프로그램 최신 정보 매칭 완료")));
         });
     }
 
@@ -124,7 +204,7 @@ impl UpdateManager {
                 .status();
 
             let (success, msg) = match status {
-                Ok(s) if s.success() => (true, format!("{app_id} 업데이트 완료 (동일 위치 대체 적용됨)")),
+                Ok(s) if s.success() => (true, format!("{app_id} 최신 버전 업데이트 완료")),
                 Ok(s) => (false, format!("{app_id} 업데이트 실패 (코드: {:?})", s.code())),
                 Err(e) => (false, format!("{app_id} 업데이트 스크립트 실행 오류: {e}")),
             };

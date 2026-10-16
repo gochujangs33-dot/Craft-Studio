@@ -107,7 +107,7 @@ impl Launcher {
             saves_dir.display(),
             entries.len()
         ));
-        Self {
+        let mut launcher = Self {
             exe_dir: exe_dir.clone(),
             registry,
             apps_dir,
@@ -128,7 +128,27 @@ impl Launcher {
             toasts: Vec::new(),
             last_poll: Instant::now(),
             pending_files: file_args,
-        }
+        };
+
+        // 3M-style Startup Auto-Check: automatically match versions from GitHub on launch
+        let repos: Vec<(String, String)> =
+            launcher.entries.iter().map(|e| (e.meta.id.clone(), e.meta.repo.clone())).collect();
+        launcher.updater.check_all_updates(repos);
+
+        launcher
+    }
+
+    fn available_update_count(&self) -> usize {
+        self.entries
+            .iter()
+            .filter(|e| {
+                if let (Some(cur), Some(latest)) = (&e.version, self.updater.latest_version(&e.meta.id)) {
+                    crate::updater::is_newer(&latest, cur)
+                } else {
+                    false
+                }
+            })
+            .count()
     }
 
     fn is_ko(&self) -> bool {
@@ -264,9 +284,9 @@ impl Launcher {
                 } else {
                     self.updater.update_app(&e.meta.id, &e.meta.repo, &e.dir);
                     let msg = if self.is_ko() {
-                        format!("{name} 최신 버전 다운로드 및 동일 위치 대체 덮어쓰기 진행 중...")
+                        format!("{name} 최신 버전 다운로드 및 업데이트 진행 중...")
                     } else {
-                        format!("Updating {name} in-place...")
+                        format!("Updating {name} to latest version...")
                     };
                     self.toast(msg, OK);
                 }
@@ -280,9 +300,9 @@ impl Launcher {
                     }
                 }
                 let msg = if self.is_ko() {
-                    format!("{started}개 프로그램 일괄 덮어쓰기 업데이트 시작...")
+                    format!("{started}개 프로그램 일괄 업데이트 시작...")
                 } else {
-                    format!("Started in-place updating for {started} apps...")
+                    format!("Started updating {started} apps...")
                 };
                 self.toast(msg, OK);
             }
@@ -348,15 +368,31 @@ impl Launcher {
                             self.show_settings = !self.show_settings;
                         }
 
-                        // Update Manager button (3M-style in-place updates)
+                        // Update Manager button with auto-detected badge
+                        let upd_count = self.available_update_count();
                         let is_upd = self.updater.has_active_updates();
                         let upd_lbl = if is_upd {
-                            if ko { "⏳ 업데이트 중..." } else { "⏳ Updating..." }
+                            if ko { "⏳ 업데이트 중...".to_string() } else { "⏳ Updating...".to_string() }
+                        } else if upd_count > 0 {
+                            if ko { format!("🔄 업데이트 ({upd_count})") } else { format!("🔄 UPDATE ({upd_count})") }
                         } else {
-                            if ko { "🔄 업데이트" } else { "🔄 UPDATE" }
+                            if ko { "🔄 업데이트".to_string() } else { "🔄 UPDATE".to_string() }
                         };
-                        let upd_tooltip = if ko { "3M 스타일 소프트웨어 대체 업데이트 관리자 열기" } else { "Open in-place software update center" };
-                        if chip(ui, upd_lbl, self.show_updates || is_upd, false).on_hover_text(upd_tooltip).clicked() {
+                        let upd_tooltip = if ko {
+                            if upd_count > 0 {
+                                format!("{upd_count}개의 새로운 업데이트가 있습니다. 클릭하여 업데이트 관리자 열기")
+                            } else {
+                                "소프트웨어 업데이트 관리자 열기".to_string()
+                            }
+                        } else {
+                            if upd_count > 0 {
+                                format!("{upd_count} update(s) available. Click to open update center.")
+                            } else {
+                                "Open software update center".to_string()
+                            }
+                        };
+                        let is_highlighted = self.show_updates || is_upd || upd_count > 0;
+                        if chip(ui, &upd_lbl, is_highlighted, false).on_hover_text(upd_tooltip).clicked() {
                             self.show_updates = !self.show_updates;
                         }
 
@@ -588,15 +624,15 @@ impl Launcher {
                 ui.add_space(2.0_f32);
                 ui.label(RichText::new(format!("v{v}")).font(mono(8.0_f32)).color(DIM));
             }
-            if let Some(latest) = self.updater.latest_version(&e.meta.id) {
-                if e.version.as_deref() != Some(&latest) {
+            if let (Some(v), Some(latest)) = (&e.version, self.updater.latest_version(&e.meta.id)) {
+                if crate::updater::is_newer(&latest, v) {
                     ui.add_space(2.0_f32);
                     Frame::new()
                         .fill(Color32::from_rgb(0x35, 0x22, 0x05))
                         .stroke(Stroke::new(1.0_f32, Color32::from_rgb(0xE5, 0xA0, 0x20)))
                         .inner_margin(Margin::symmetric(3, 1))
                         .show(ui, |ui| {
-                            ui.label(RichText::new("NEW").font(mono(7.5_f32)).color(Color32::from_rgb(0xF5, 0xC0, 0x40)));
+                            ui.label(RichText::new(format!("NEW v{latest}")).font(mono(7.5_f32)).color(Color32::from_rgb(0xF5, 0xC0, 0x40)));
                         });
                 }
             }
@@ -625,7 +661,7 @@ impl Launcher {
                         ui.close_menu();
                     }
                     ui.separator();
-                    let upd_txt = if ko { format!("🔄 {} 덮어쓰기 업데이트", e.meta.name()) } else { format!("🔄 Update {} in-place", e.meta.name()) };
+                    let upd_txt = if ko { format!("🔄 {} 업데이트", e.meta.name()) } else { format!("🔄 Update {}", e.meta.name()) };
                     if ui.button(upd_txt).clicked() {
                         actions.push(Action::Update(i));
                         ui.close_menu();
@@ -691,7 +727,7 @@ impl Launcher {
 
         let is_updating = self.updater.is_updating(&e.meta.id);
         let btn_label = if is_updating {
-            if ko { "⏳ 대체 업데이트 중..." } else { "⏳ Updating..." }
+            if ko { "⏳ 업데이트 중..." } else { "⏳ Updating..." }
         } else if ko {
             "▶  실행"
         } else {
@@ -897,9 +933,9 @@ impl Launcher {
         let ko = self.is_ko();
         let mut open = self.show_updates;
         let title = if ko {
-            "🔄 소프트웨어 통합 업데이트 관리자 (3M 대체 덮어쓰기)"
+            "🔄 소프트웨어 통합 업데이트 관리자"
         } else {
-            "🔄 SOFTWARE UPDATE CENTER (In-place Replace)"
+            "🔄 SOFTWARE UPDATE CENTER"
         };
 
         egui::Window::new(RichText::new(title).font(mono(11.5_f32)))
@@ -912,20 +948,20 @@ impl Launcher {
             .show(ctx, |ui| {
                 ui.set_max_width(720.0_f32);
                 let desc = if ko {
-                    "3M 통합 프로그램처럼 최신 릴리스 바이너리를 기존 설치 위치에 그대로 덮어쓰기 대체합니다. \
-                     사용자가 작업한 파일(SavedFiles)과 개인 설정은 100% 안전하게 보존됩니다."
+                    "공식 최신 릴리스로 각 프로그램을 최신 버전으로 안전하게 업데이트합니다. \
+                     사용자가 작업한 파일(SavedFiles)과 개인 설정은 안전하게 보존됩니다."
                 } else {
-                    "Downloads the latest releases from GitHub and replaces the local binaries in-place (3M-style). \
-                     Your projects and files in SavedFiles are never touched."
+                    "Updates your programs to the latest official releases. \
+                     Your projects and files in SavedFiles are safely preserved."
                 };
                 ui.label(RichText::new(desc).size(12.0_f32).color(MUTED));
                 ui.add_space(10.0_f32);
 
                 ui.horizontal(|ui| {
                     let chk_lbl = if self.updater.is_checking {
-                        if ko { "⏳ 최신 정보 확인 중..." } else { "⏳ Checking GitHub..." }
+                        if ko { "⏳ 최신 정보 확인 중..." } else { "⏳ Checking for updates..." }
                     } else if ko {
-                        "🔄 최신 릴리스 정보 확인"
+                        "🔄 최신 버전 정보 확인"
                     } else {
                         "🔄 Check for Updates"
                     };
@@ -935,11 +971,11 @@ impl Launcher {
 
                     let is_upd_all = self.updater.has_active_updates();
                     let all_lbl = if is_upd_all {
-                        if ko { "⏳ 일괄 업데이트 진행 중..." } else { "⏳ Updating in-place..." }
+                        if ko { "⏳ 일괄 업데이트 진행 중..." } else { "⏳ Updating..." }
                     } else if ko {
-                        "⚡ 전체 프로그램 일괄 대체 업데이트"
+                        "⚡ 전체 프로그램 일괄 업데이트"
                     } else {
-                        "⚡ Update All Apps In-place"
+                        "⚡ Update All Apps"
                     };
                     if ui.add_enabled(!is_upd_all, egui::Button::new(RichText::new(all_lbl).font(mono(10.5_f32)).color(Color32::from_rgb(0xF5, 0xC0, 0x40)))).clicked() {
                         actions.push(Action::UpdateAll);
@@ -980,21 +1016,21 @@ impl Launcher {
 
                                 let is_updating = self.updater.is_updating(&e.meta.id);
                                 if is_updating {
-                                    ui.label(RichText::new(if ko { "⏳ 대체 중..." } else { "⏳ Updating..." }).font(mono(10.0_f32)).color(Color32::from_rgb(0xF5, 0xC0, 0x40)));
-                                } else if let Some(lat) = &latest {
-                                    if e.version.as_deref() == Some(lat.as_str()) {
-                                        ui.label(RichText::new(if ko { "✔ 최신 상태" } else { "✔ Up to date" }).font(mono(10.0_f32)).color(OK));
-                                    } else {
+                                    ui.label(RichText::new(if ko { "⏳ 업데이트 중..." } else { "⏳ Updating..." }).font(mono(10.0_f32)).color(Color32::from_rgb(0xF5, 0xC0, 0x40)));
+                                } else if let (Some(cur), Some(lat)) = (e.version.as_deref(), latest.as_deref()) {
+                                    if crate::updater::is_newer(lat, cur) {
                                         ui.label(RichText::new(if ko { "⚡ 업데이트 가능" } else { "⚡ Available" }).font(mono(10.0_f32)).color(Color32::from_rgb(0xF5, 0xC0, 0x40)));
+                                    } else {
+                                        ui.label(RichText::new(if ko { "✔ 최신 상태" } else { "✔ Up to date" }).font(mono(10.0_f32)).color(OK));
                                     }
                                 } else {
                                     ui.label(RichText::new(if ko { "확인 대기" } else { "Ready" }).font(mono(10.0_f32)).color(DIM));
                                 }
 
                                 let btn_txt = if is_updating {
-                                    if ko { "대체 중" } else { "Updating" }
+                                    if ko { "업데이트 중" } else { "Updating" }
                                 } else if ko {
-                                    "🔄 대체 업데이트"
+                                    "🔄 지금 업데이트"
                                 } else {
                                     "🔄 Update"
                                 };
@@ -1128,7 +1164,15 @@ impl eframe::App for Launcher {
         // Poll background updater events
         for (app_id, success, msg) in self.updater.poll_events() {
             if app_id == "__check_all__" {
-                self.toast(msg, OK);
+                let count = self.available_update_count();
+                if count > 0 {
+                    let alert = if self.is_ko() {
+                        format!("💡 {count}개 프로그램의 새로운 업데이트가 감지되었습니다! [🔄 업데이트]를 확인하세요.")
+                    } else {
+                        format!("💡 {count} update(s) detected! Check [🔄 UPDATE].")
+                    };
+                    self.toast(alert, Color32::from_rgb(0xF5, 0xC0, 0x40));
+                }
             } else {
                 let color = if success { OK } else { ERR };
                 self.toast(msg, color);
