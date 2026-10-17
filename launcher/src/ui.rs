@@ -276,18 +276,28 @@ impl Launcher {
 
     /// Launches an independent instance (supports opening multiple windows of the same or different apps).
     fn launch(&mut self, ctx: &egui::Context, idx: usize, file: Option<&Path>) {
-        let (id, name, exe, repo, save_dir) = {
+        let (id, name, exe, repo, dir, save_dir) = {
             let e = &self.entries[idx];
-            (e.meta.id.clone(), e.meta.name(), e.exe.clone(), e.meta.repo.clone(), e.save_dir.clone())
+            (e.meta.id.clone(), e.meta.name(), e.exe.clone(), e.meta.repo.clone(), e.dir.clone(), e.save_dir.clone())
         };
         let Some(exe) = exe else {
-            let msg = if self.is_ko() {
-                format!("{name} 실행 파일을 찾을 수 없습니다.")
+            // Automatically trigger in-app download and installation instead of opening web browser!
+            if self.updater.update_app(&id, &repo, &dir) {
+                let msg = if self.is_ko() {
+                    format!("{name} 프로그램 다운로드 및 설치를 시작합니다...")
+                } else {
+                    format!("Downloading and installing {name}...")
+                };
+                self.toast(msg, OK);
+                self.show_progress_modal = true;
             } else {
-                format!("{name} executable not found.")
-            };
-            self.toast(msg, ERR);
-            ctx.open_url(egui::OpenUrl::new_tab(format!("{repo}/releases/latest")));
+                let msg = if self.is_ko() {
+                    format!("{name} 설치가 이미 진행 중입니다.")
+                } else {
+                    format!("{name} installation is already in progress.")
+                };
+                self.toast(msg, OK);
+            }
             return;
         };
 
@@ -796,7 +806,14 @@ impl Launcher {
         
         // Show detailed description tooltip on card hover
         card_resp.on_hover_ui(|ui| {
-            show_app_tooltip(ui, e, lang, ko);
+            Frame::new()
+                .fill(Color32::from_rgb(0x14, 0x14, 0x18))
+                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(0x2E, 0x2E, 0x38)))
+                .corner_radius(6.0_f32)
+                .inner_margin(Margin::same(12))
+                .show(ui, |ui| {
+                    show_app_tooltip(ui, e, lang, ko);
+                });
         });
 
         let hovered = ui.rect_contains_pointer(rect);
@@ -925,6 +942,22 @@ impl Launcher {
                     .corner_radius(4.0_f32)
                     .min_size(vec2(btn_rect.width(), btn_h)),
             );
+        } else if e.exe.is_none() {
+            // Not installed yet: Show Install button!
+            let fill = lerp(Color32::from_rgb(0x18, 0x18, 0x1C), accent, t);
+            let fg = if t > 0.4_f32 { BG } else { accent };
+            let btn_label = if ko { "⬇  설치하기" } else { "⬇  INSTALL" };
+
+            let install_btn = bui.add(
+                egui::Button::new(RichText::new(btn_label).font(mono(11.0_f32)).strong().color(fg))
+                    .fill(fill)
+                    .stroke(Stroke::new(1.0_f32, lerp(LINE, accent, t)))
+                    .corner_radius(4.0_f32)
+                    .min_size(vec2(btn_rect.width(), btn_h)),
+            );
+            if install_btn.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                actions.push(Action::Update(i));
+            }
         } else {
             // Standard Launch button: user can always run current/previous version without forced update
             let fill = lerp(Color32::from_rgb(0x18, 0x18, 0x1C), accent, t);
@@ -980,7 +1013,14 @@ impl Launcher {
                             }
                         }).response;
                         row_resp.on_hover_ui(|ui| {
-                            show_app_tooltip(ui, e, lang, ko);
+                            Frame::new()
+                                .fill(Color32::from_rgb(0x14, 0x14, 0x18))
+                                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(0x2E, 0x2E, 0x38)))
+                                .corner_radius(6.0_f32)
+                                .inner_margin(Margin::same(12))
+                                .show(ui, |ui| {
+                                    show_app_tooltip(ui, e, lang, ko);
+                                });
                         });
                         ui.label(RichText::new(e.meta.tagline(lang)).color(INK.gamma_multiply(0.85_f32)));
                         ui.label(RichText::new(e.meta.like(lang)).color(DIM));
@@ -989,16 +1029,27 @@ impl Launcher {
                         let running_pids = self.runner.pids(&e.meta.id);
                         if !running_pids.is_empty() {
                             running_badge(ui, running_pids.len(), accent, ko);
+                        } else if e.exe.is_none() {
+                            ui.label(RichText::new(if ko { "미설치" } else { "NOT INSTALLED" }).font(mono(10.0_f32)).color(Color32::from_rgb(0xF5, 0xC0, 0x40)));
                         } else {
                             ui.label(RichText::new(if ko { "대기" } else { "READY" }).font(mono(10.0_f32)).color(DIM));
                         }
 
-                        let label = if ko { "▶ 실행" } else { "▶ OPEN" };
+                        let is_installed = e.exe.is_some();
+                        let label = if is_installed {
+                            if ko { "▶ 실행" } else { "▶ OPEN" }
+                        } else {
+                            if ko { "⬇ 설치" } else { "⬇ INSTALL" }
+                        };
                         if ui
                             .add(egui::Button::new(RichText::new(label).font(mono(10.5_f32)).strong()).min_size(vec2(96.0_f32, 26.0_f32)))
                             .clicked()
                         {
-                            actions.push(Action::Open(i));
+                            if is_installed {
+                                actions.push(Action::Open(i));
+                            } else {
+                                actions.push(Action::Update(i));
+                            }
                         }
                         ui.end_row();
                     }
@@ -1850,11 +1901,11 @@ fn show_app_tooltip(ui: &mut egui::Ui, e: &AppEntry, lang: &str, ko: bool) {
             ui.label(RichText::new(&e.meta.prefix).size(16.0_f32).strong().color(INK));
             ui.label(RichText::new("Craft").size(16.0_f32).strong().color(accent));
             ui.add_space(8.0_f32);
-            ui.label(RichText::new(e.meta.like(lang)).size(11.0_f32).color(DIM));
+            ui.label(RichText::new(e.meta.like(lang)).size(11.0_f32).color(Color32::from_rgb(0xA0, 0xA0, 0xAC)));
         });
         ui.separator();
         ui.add_space(2.0_f32);
-        ui.label(RichText::new(e.meta.description(lang)).size(11.5_f32).color(INK.gamma_multiply(0.95_f32)));
+        ui.label(RichText::new(e.meta.description(lang)).size(11.5_f32).color(Color32::from_rgb(0xDD, 0xDD, 0xE4)));
         if !e.meta.extensions.is_empty() {
             ui.add_space(6.0_f32);
             ui.horizontal(|ui| {
@@ -1863,7 +1914,7 @@ fn show_app_tooltip(ui: &mut egui::Ui, e: &AppEntry, lang: &str, ko: bool) {
                 ui.label(
                     RichText::new(format!(".{}", e.meta.extensions.join("  .")))
                         .font(mono(9.5_f32))
-                        .color(MUTED),
+                        .color(Color32::from_rgb(0xB0, 0xB0, 0xBC)),
                 );
             });
         }

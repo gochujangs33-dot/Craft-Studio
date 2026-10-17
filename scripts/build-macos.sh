@@ -105,13 +105,19 @@ if [ -f "${ROOT_DIR}/version.json" ]; then
 fi
 if [ -d "${DIST_DIR}/apps" ]; then
     mkdir -p "${RESOURCES_DIR}/apps"
+    cp -R "${DIST_DIR}/apps"/* "${RESOURCES_DIR}/apps/" 2>/dev/null || true
+    echo "==> Copied pre-bundled apps into ${RESOURCES_DIR}/apps"
 fi
 if [ -d "${DIST_DIR}/custom_apps" ]; then
     mkdir -p "${RESOURCES_DIR}/custom_apps"
+    cp -R "${DIST_DIR}/custom_apps"/* "${RESOURCES_DIR}/custom_apps/" 2>/dev/null || true
 fi
 if [ -d "${DIST_DIR}/SavedFiles" ]; then
     mkdir -p "${RESOURCES_DIR}/SavedFiles"
 fi
+
+# Ensure Gatekeeper quarantine flag is cleared on all bundled binaries
+xattr -cr "${APP_BUNDLE}" 2>/dev/null || true
 
 # 3. Create Release Archives
 mkdir -p "${RELEASE_DIR}"

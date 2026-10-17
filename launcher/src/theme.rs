@@ -33,6 +33,11 @@ pub fn mono(size: f32) -> FontId {
 }
 
 pub fn apply(ctx: &egui::Context) {
+    // Force Dark theme preference across all platforms (prevents macOS Light Mode from overriding tooltips/popups)
+    ctx.options_mut(|opt| {
+        opt.theme_preference = egui::ThemePreference::Dark;
+    });
+
     // ------------------------------------------------ fonts (Korean support)
     let mut fonts = FontDefinitions::default();
     let font_paths = [
@@ -65,6 +70,7 @@ pub fn apply(ctx: &egui::Context) {
 
     // ------------------------------------------------ visuals
     let mut v = Visuals::dark();
+    v.dark_mode = true;
     v.panel_fill = BG;
     v.window_fill = PANEL;
     v.extreme_bg_color = Color32::from_rgb(0x0E, 0x0E, 0x10);
@@ -77,6 +83,7 @@ pub fn apply(ctx: &egui::Context) {
     v.selection.bg_fill = Color32::from_rgb(0x2B, 0x2B, 0x33);
     v.selection.stroke = Stroke::new(1.0_f32, INK);
     v.hyperlink_color = INK;
+    v.override_text_color = Some(INK);
 
     let w = &mut v.widgets;
     for wv in [&mut w.noninteractive, &mut w.inactive, &mut w.hovered, &mut w.active, &mut w.open] {

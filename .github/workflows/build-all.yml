@@ -79,6 +79,13 @@ jobs:
             -output target/universal/ArtCraftStudio
           chmod +x target/universal/ArtCraftStudio
 
+      - name: Fetch macOS Apps
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          chmod +x ./scripts/fetch-apps.sh
+          ./scripts/fetch-apps.sh || true
+
       - name: Package macOS .app and .dmg
         run: |
           chmod +x ./scripts/build-macos.sh

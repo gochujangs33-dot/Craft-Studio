@@ -109,24 +109,94 @@ pub struct AppEntry {
     pub save_dir: PathBuf,
 }
 
+/// Helper to test if a directory is writable
+pub fn is_dir_writable(dir: &Path) -> bool {
+    let test_dir = if dir.exists() {
+        dir.to_path_buf()
+    } else {
+        dir.parent().unwrap_or(dir).to_path_buf()
+    };
+    if std::fs::create_dir_all(&test_dir).is_ok() {
+        let test_file = test_dir.join(".artcraft_write_test");
+        if std::fs::write(&test_file, b"ok").is_ok() {
+            let _ = std::fs::remove_file(&test_file);
+            return true;
+        }
+    }
+    false
+}
+
+/// Returns a writable destination directory for downloading/installing an app
+pub fn get_writable_app_dir(apps_dir: &Path, meta_id: &str) -> PathBuf {
+    let target = apps_dir.join(meta_id);
+    if is_dir_writable(&target) || is_dir_writable(apps_dir) {
+        return target;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(home) = std::env::var_os("HOME") {
+            let user_dir = PathBuf::from(home)
+                .join("Library/Application Support/ArtCraftStudio/apps")
+                .join(meta_id);
+            let _ = std::fs::create_dir_all(&user_dir);
+            return user_dir;
+        }
+    }
+    target
+}
+
 /// Looks for `apps/` (installed layout) or `dist/apps/` (dev layout) walking up from the exe.
 pub fn find_apps_dir(exe_dir: &Path) -> PathBuf {
     let mut cur = Some(exe_dir);
     for _ in 0..5 {
         let Some(p) = cur else { break };
-        for cand in [p.join("apps"), p.join("dist").join("apps")] {
+        for cand in [
+            p.join("apps"),
+            p.join("dist").join("apps"),
+            p.join("Resources").join("apps"),
+            p.join("Contents").join("Resources").join("apps"),
+        ] {
             if cand.is_dir() {
                 return cand;
             }
         }
         cur = p.parent();
     }
+
+    #[cfg(target_os = "macos")]
+    {
+        // Check user application support directory
+        if let Some(home) = std::env::var_os("HOME") {
+            let app_sup = PathBuf::from(home).join("Library/Application Support/ArtCraftStudio/apps");
+            if app_sup.is_dir() {
+                return app_sup;
+            }
+        }
+        // If inside an .app bundle (Contents/MacOS), check Contents/Resources/apps
+        let res_apps = exe_dir.join("../Resources/apps");
+        if res_apps.is_dir() {
+            return res_apps;
+        }
+    }
+
     exe_dir.join("apps")
 }
 
 /// Base folder where user modified files and projects are saved (`<exe_dir>/SavedFiles`).
 pub fn find_saves_dir(exe_dir: &Path) -> PathBuf {
     let saves = exe_dir.join("SavedFiles");
+    if is_dir_writable(&saves) {
+        let _ = std::fs::create_dir_all(&saves);
+        return saves;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(home) = std::env::var_os("HOME") {
+            let user_saves = PathBuf::from(home).join("Documents/ArtCraftStudio/SavedFiles");
+            let _ = std::fs::create_dir_all(&user_saves);
+            return user_saves;
+        }
+    }
     let _ = std::fs::create_dir_all(&saves);
     saves
 }
@@ -134,6 +204,18 @@ pub fn find_saves_dir(exe_dir: &Path) -> PathBuf {
 /// Folder where user can place custom-modified app binaries (`<exe_dir>/custom_apps/<id>/`).
 pub fn find_custom_apps_dir(exe_dir: &Path) -> PathBuf {
     let custom = exe_dir.join("custom_apps");
+    if is_dir_writable(&custom) {
+        let _ = std::fs::create_dir_all(&custom);
+        return custom;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(home) = std::env::var_os("HOME") {
+            let user_custom = PathBuf::from(home).join("Library/Application Support/ArtCraftStudio/custom_apps");
+            let _ = std::fs::create_dir_all(&user_custom);
+            return user_custom;
+        }
+    }
     let _ = std::fs::create_dir_all(&custom);
     custom
 }
@@ -149,12 +231,48 @@ pub fn scan(reg: &Registry, apps_dir: &Path, exe_dir: &Path, saves_base: &Path) 
             let app_save_dir = saves_base.join(&app_name);
             let _ = std::fs::create_dir_all(&app_save_dir);
 
-            // Check if user has placed a custom modified binary in custom_apps/<id>/
+            // 1. Check custom modified binary in custom_apps/<id>/
             let custom_app_dir = custom_base.join(&meta.id);
             let custom_exe = detect_exe(&custom_app_dir, &meta.id, None);
 
-            let official_dir = apps_dir.join(&meta.id);
-            let official_exe = detect_exe(&official_dir, &meta.id, meta.exe.as_deref());
+            // 2. Official search candidates in priority order:
+            #[allow(unused_mut)]
+            let mut candidates = vec![
+                apps_dir.join(&meta.id),
+            ];
+
+            #[cfg(target_os = "macos")]
+            {
+                // Resources inside .app bundle
+                candidates.push(exe_dir.join("../Resources/apps").join(&meta.id));
+                candidates.push(exe_dir.join("../../Resources/apps").join(&meta.id));
+
+                // User Application Support directory
+                if let Some(home) = std::env::var_os("HOME") {
+                    candidates.push(PathBuf::from(home).join("Library/Application Support/ArtCraftStudio/apps").join(&meta.id));
+                }
+
+                // Portable apps folder next to .app bundle
+                if let Some(parent) = exe_dir.parent().and_then(|p| p.parent()).and_then(|p| p.parent()) {
+                    candidates.push(parent.join("apps").join(&meta.id));
+                }
+            }
+
+            let mut official_exe = None;
+            let mut official_dir = apps_dir.join(&meta.id);
+
+            for cand in candidates {
+                if let Some(found_exe) = detect_exe(&cand, &meta.id, meta.exe.as_deref()) {
+                    official_exe = Some(found_exe);
+                    official_dir = cand;
+                    break;
+                }
+            }
+
+            // If not found yet, ensure official_dir is in a writable location for downloading
+            if official_exe.is_none() {
+                official_dir = get_writable_app_dir(apps_dir, &meta.id);
+            }
 
             let (exe, dir, is_custom_mod) = if let Some(ce) = custom_exe {
                 (Some(ce), custom_app_dir, true)
@@ -243,8 +361,18 @@ fn collect_exes(dir: &Path, depth: u32, out: &mut Vec<PathBuf>) {
             {
                 use std::os::unix::fs::PermissionsExt;
                 if let Ok(m) = ent.metadata() {
-                    if m.is_file() && (m.permissions().mode() & 0o111 != 0) {
-                        out.push(p);
+                    if m.is_file() {
+                        let is_exec = m.permissions().mode() & 0o111 != 0;
+                        let ext = p.extension().and_then(|e| e.to_str()).unwrap_or_default().to_lowercase();
+                        let is_doc = matches!(ext.as_str(), "txt" | "md" | "json" | "png" | "ico" | "icns" | "plist" | "log" | "version");
+                        if is_exec || !is_doc {
+                            if !is_exec {
+                                let mut perms = m.permissions();
+                                perms.set_mode(perms.mode() | 0o755);
+                                let _ = std::fs::set_permissions(&p, perms);
+                            }
+                            out.push(p);
+                        }
                     }
                 }
             }
@@ -279,6 +407,12 @@ impl Runner {
         file: Option<&Path>,
     ) -> std::io::Result<u32> {
         #[cfg(target_os = "macos")]
+        {
+            // Remove quarantine attribute recursively so Gatekeeper won't block downloaded apps
+            let _ = Command::new("xattr").args(["-dr", "com.apple.quarantine"]).arg(exe).status();
+        }
+
+        #[cfg(target_os = "macos")]
         if exe.extension().is_some_and(|e| e.eq_ignore_ascii_case("app")) {
             let mut cmd = Command::new("open");
             cmd.arg("-n").arg(exe);
@@ -291,6 +425,18 @@ impl Runner {
             let pid = child.id();
             self.children.entry(id.to_string()).or_default().push(child);
             return Ok(pid);
+        }
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if let Ok(meta) = exe.metadata() {
+                let mut perms = meta.permissions();
+                if perms.mode() & 0o111 == 0 {
+                    perms.set_mode(perms.mode() | 0o755);
+                    let _ = std::fs::set_permissions(exe, perms);
+                }
+            }
         }
 
         let mut cmd = Command::new(exe);
