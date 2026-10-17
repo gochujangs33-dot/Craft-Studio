@@ -79,16 +79,19 @@ jobs:
             -output target/universal/ArtCraftStudio
           chmod +x target/universal/ArtCraftStudio
 
+      - name: Normalize script line endings
+        run: |
+          sed -i '' -e 's/\r$//' ./scripts/*.sh 2>/dev/null || sed -i -e 's/\r$//' ./scripts/*.sh 2>/dev/null || true
+          chmod +x ./scripts/*.sh
+
       - name: Fetch macOS Apps
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          chmod +x ./scripts/fetch-apps.sh
           ./scripts/fetch-apps.sh || true
 
       - name: Package macOS .app and .dmg
         run: |
-          chmod +x ./scripts/build-macos.sh
           PREBUILT_BINARY="launcher/target/universal/ArtCraftStudio" ./scripts/build-macos.sh
 
       - name: Upload macOS Artifacts
