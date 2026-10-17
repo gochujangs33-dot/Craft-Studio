@@ -285,6 +285,24 @@ pub fn scan(reg: &Registry, apps_dir: &Path, exe_dir: &Path, saves_base: &Path) 
                 // 4. Resources inside .app bundle (factory pre-installed base versions)
                 candidates.push(exe_dir.join("../Resources/apps").join(&meta.id));
                 candidates.push(exe_dir.join("../../Resources/apps").join(&meta.id));
+
+                // 5. Standard macOS /Applications folders (e.g. /Applications/HOP.app, /Applications/hop.app)
+                for app_base in ["/Applications", "/System/Applications"] {
+                    let base = PathBuf::from(app_base);
+                    candidates.push(base.join(&meta.id));
+                    candidates.push(base.join(format!("{}.app", meta.id)));
+                    candidates.push(base.join(format!("{}.app", meta.id.to_uppercase())));
+                    candidates.push(base.join(format!("{}.app", meta.name())));
+                    candidates.push(base.join(format!("{}.app", meta.prefix)));
+                }
+                if let Some(home) = std::env::var_os("HOME") {
+                    let uapps = PathBuf::from(home).join("Applications");
+                    candidates.push(uapps.join(&meta.id));
+                    candidates.push(uapps.join(format!("{}.app", meta.id)));
+                    candidates.push(uapps.join(format!("{}.app", meta.id.to_uppercase())));
+                    candidates.push(uapps.join(format!("{}.app", meta.name())));
+                    candidates.push(uapps.join(format!("{}.app", meta.prefix)));
+                }
             }
 
             let mut official_exe = None;
@@ -337,6 +355,10 @@ pub fn scan(reg: &Registry, apps_dir: &Path, exe_dir: &Path, saves_base: &Path) 
 }
 
 fn detect_exe(dir: &Path, id: &str, hint: Option<&str>) -> Option<PathBuf> {
+    // If the path itself is already an executable or .app bundle
+    if dir.is_dir() && dir.extension().is_some_and(|e| e.eq_ignore_ascii_case("app")) {
+        return Some(dir.to_path_buf());
+    }
     if let Some(h) = hint {
         let p = dir.join(h);
         if p.is_file() || (p.is_dir() && p.extension().is_some_and(|e| e.eq_ignore_ascii_case("app"))) {
@@ -355,10 +377,15 @@ fn detect_exe(dir: &Path, id: &str, hint: Option<&str>) -> Option<PathBuf> {
                 s.eq_ignore_ascii_case(&want_exe)
                     || s.eq_ignore_ascii_case(&want_app)
                     || s.eq_ignore_ascii_case(id)
+                    || s.to_lowercase().starts_with(&id.to_lowercase())
             })
         })
     {
         return Some(p.clone());
+    }
+    #[cfg(target_os = "macos")]
+    if let Some(app) = cands.iter().find(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("app"))) {
+        return Some(app.clone());
     }
     const SKIP: [&str; 6] = ["cli", "uninst", "crash", "helper", "update", "server"];
     cands

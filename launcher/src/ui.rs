@@ -77,6 +77,7 @@ pub struct Launcher {
     toasts: Vec<(String, Color32, Instant)>,
     last_poll: Instant,
     pending_files: Vec<PathBuf>,
+    launch_after_install: Option<String>,
 }
 
 fn load_texture(ctx: &egui::Context, name: &str, bytes: &[u8], max_w: Option<u32>) -> Option<TextureHandle> {
@@ -141,6 +142,7 @@ impl Launcher {
             toasts: Vec::new(),
             last_poll: Instant::now(),
             pending_files: file_args,
+            launch_after_install: None,
         };
 
         // 3M-style Startup Auto-Check: automatically match versions from GitHub on launch
@@ -282,20 +284,21 @@ impl Launcher {
             (e.meta.id.clone(), e.meta.name(), e.exe.clone(), e.meta.repo.clone(), e.dir.clone(), e.save_dir.clone())
         };
         let Some(exe) = exe else {
-            // Automatically trigger in-app download and installation instead of opening web browser!
+            self.launch_after_install = Some(id.clone());
+            // Automatically trigger in-app download and installation then auto-run!
             if self.updater.update_app(&id, &repo, &dir) {
                 let msg = if self.is_ko() {
-                    format!("{name} 프로그램 다운로드 및 설치를 시작합니다...")
+                    format!("{name} 실행을 위해 준비 중입니다. 완료 즉시 자동 실행됩니다...")
                 } else {
-                    format!("Downloading and installing {name}...")
+                    format!("Preparing {name}... Will launch automatically when ready.")
                 };
                 self.toast(msg, OK);
                 self.show_progress_modal = true;
             } else {
                 let msg = if self.is_ko() {
-                    format!("{name} 설치가 이미 진행 중입니다.")
+                    format!("{name} 실행 준비가 이미 진행 중입니다.")
                 } else {
-                    format!("{name} installation is already in progress.")
+                    format!("{name} preparation is already in progress.")
                 };
                 self.toast(msg, OK);
             }
@@ -947,30 +950,14 @@ impl Launcher {
         if is_updating {
             let _ = bui.add_enabled(
                 false,
-                egui::Button::new(RichText::new(if ko { "⏳ 업데이트 중..." } else { "⏳ Updating..." }).font(mono(11.0_f32)).color(Color32::from_rgb(0xF5, 0xC0, 0x40)))
+                egui::Button::new(RichText::new(if ko { "⏳ 실행 준비 중..." } else { "⏳ Preparing..." }).font(mono(11.0_f32)).color(Color32::from_rgb(0xF5, 0xC0, 0x40)))
                     .fill(Color32::from_rgb(0x35, 0x22, 0x05))
                     .stroke(Stroke::new(1.0_f32, Color32::from_rgb(0xE5, 0xA0, 0x20)))
                     .corner_radius(4.0_f32)
                     .min_size(vec2(btn_rect.width(), btn_h)),
             );
-        } else if e.exe.is_none() {
-            // Not installed yet: Show Install button!
-            let fill = lerp(Color32::from_rgb(0x18, 0x18, 0x1C), accent, t);
-            let fg = if t > 0.4_f32 { BG } else { accent };
-            let btn_label = if ko { "⬇  설치하기" } else { "⬇  INSTALL" };
-
-            let install_btn = bui.add(
-                egui::Button::new(RichText::new(btn_label).font(mono(11.0_f32)).strong().color(fg))
-                    .fill(fill)
-                    .stroke(Stroke::new(1.0_f32, lerp(LINE, accent, t)))
-                    .corner_radius(4.0_f32)
-                    .min_size(vec2(btn_rect.width(), btn_h)),
-            );
-            if install_btn.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                actions.push(Action::Update(i));
-            }
         } else {
-            // Standard Launch button: user can always run current/previous version without forced update
+            // Always display direct Launch button across all apps for unified UX
             let fill = lerp(Color32::from_rgb(0x18, 0x18, 0x1C), accent, t);
             let fg = if t > 0.4_f32 { BG } else { INK };
             let btn_label = if ko { "▶  실행" } else { "▶  LAUNCH" };
@@ -1040,27 +1027,16 @@ impl Launcher {
                         let running_pids = self.runner.pids(&e.meta.id);
                         if !running_pids.is_empty() {
                             running_badge(ui, running_pids.len(), accent, ko);
-                        } else if e.exe.is_none() {
-                            ui.label(RichText::new(if ko { "미설치" } else { "NOT INSTALLED" }).font(mono(10.0_f32)).color(Color32::from_rgb(0xF5, 0xC0, 0x40)));
                         } else {
                             ui.label(RichText::new(if ko { "대기" } else { "READY" }).font(mono(10.0_f32)).color(DIM));
                         }
 
-                        let is_installed = e.exe.is_some();
-                        let label = if is_installed {
-                            if ko { "▶ 실행" } else { "▶ OPEN" }
-                        } else {
-                            if ko { "⬇ 설치" } else { "⬇ INSTALL" }
-                        };
+                        let label = if ko { "▶ 실행" } else { "▶ OPEN" };
                         if ui
                             .add(egui::Button::new(RichText::new(label).font(mono(10.5_f32)).strong()).min_size(vec2(96.0_f32, 26.0_f32)))
                             .clicked()
                         {
-                            if is_installed {
-                                actions.push(Action::Open(i));
-                            } else {
-                                actions.push(Action::Update(i));
-                            }
+                            actions.push(Action::Open(i));
                         }
                         ui.end_row();
                     }
@@ -1854,6 +1830,12 @@ impl eframe::App for Launcher {
                             self.updater.latest_version(&app_id).unwrap_or_default()
                         });
                         self.updater.mark_updated(&app_id, &cur_v);
+                    }
+                    if self.launch_after_install.as_deref() == Some(&app_id) {
+                        self.launch_after_install = None;
+                        if let Some(pos) = self.entries.iter().position(|e| e.meta.id == app_id) {
+                            self.launch(ctx, pos, None);
+                        }
                     }
                 }
             }
