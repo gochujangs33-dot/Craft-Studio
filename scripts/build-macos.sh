@@ -125,12 +125,25 @@ if [ -d "${DIST_DIR}/SavedFiles" ]; then
     mkdir -p "${RESOURCES_DIR}/SavedFiles"
 fi
 
+# Strip Intel (x86_64) slices to optimize for Apple Silicon (M1/M2/M3/M4) and cut size in half!
+if command -v lipo >/dev/null 2>&1; then
+    echo "==> Optimizing for Apple Silicon (thinning universal binaries to arm64 only)..."
+    find "${APP_BUNDLE}" -type f | while read -r bin; do
+        if file "$bin" 2>/dev/null | grep -q "Mach-O universal binary"; then
+            if lipo -info "$bin" 2>/dev/null | grep -q "arm64"; then
+                lipo -thin arm64 "$bin" -output "${bin}.arm64" 2>/dev/null && mv -f "${bin}.arm64" "$bin"
+            fi
+        fi
+    done
+    echo "==> Apple Silicon optimization complete."
+fi
+
 # Ensure Gatekeeper quarantine flag is cleared on all bundled binaries
 xattr -cr "${APP_BUNDLE}" 2>/dev/null || true
 
 # 3. Create Release Archives
 mkdir -p "${RELEASE_DIR}"
-echo "==> Creating macOS distribution packages..."
+echo "==> Creating macOS Apple Silicon distribution packages..."
 
 # Create ZIP archive
 cd "${DIST_DIR}"
@@ -142,8 +155,8 @@ ZIP_ITEMS=("ArtCraftStudio.app")
 [ -d "custom_apps" ] && ZIP_ITEMS+=("custom_apps")
 [ -d "SavedFiles" ] && ZIP_ITEMS+=("SavedFiles")
 
-zip -r -q "${RELEASE_DIR}/ArtCraftStudio-macos-universal.zip" "${ZIP_ITEMS[@]}"
-cp -f "${RELEASE_DIR}/ArtCraftStudio-macos-universal.zip" "${RELEASE_DIR}/ArtCraftStudio-macos-x64.zip" 2>/dev/null || true
+zip -r -q "${RELEASE_DIR}/ArtCraftStudio-macos-arm64.zip" "${ZIP_ITEMS[@]}"
+cp -f "${RELEASE_DIR}/ArtCraftStudio-macos-arm64.zip" "${RELEASE_DIR}/ArtCraftStudio-macos-universal.zip" 2>/dev/null || true
 
 # If on macOS, build .dmg using hdiutil
 if command -v hdiutil >/dev/null 2>&1; then
@@ -155,11 +168,13 @@ if command -v hdiutil >/dev/null 2>&1; then
     if [ -f "${RESOURCES_DIR}/AppIcon.icns" ]; then
         cp -f "${RESOURCES_DIR}/AppIcon.icns" "${DMG_TMP}/.VolumeIcon.icns" 2>/dev/null || true
     fi
-    hdiutil create -volname "ArtCraft Studio" -srcfolder "${DMG_TMP}" -ov -format UDZO "${RELEASE_DIR}/ArtCraftStudio-macos.dmg"
+    hdiutil create -volname "ArtCraft Studio" -srcfolder "${DMG_TMP}" -ov -format UDZO "${RELEASE_DIR}/ArtCraftStudio-macos-arm64.dmg"
+    cp -f "${RELEASE_DIR}/ArtCraftStudio-macos-arm64.dmg" "${RELEASE_DIR}/ArtCraftStudio-macos.dmg" 2>/dev/null || true
     rm -rf "${DMG_TMP}"
-    echo "==> Created ${RELEASE_DIR}/ArtCraftStudio-macos.dmg"
+    echo "==> Created ${RELEASE_DIR}/ArtCraftStudio-macos.dmg (Apple Silicon optimized)"
 fi
 
 echo "==> macOS build complete! Artifacts:"
 echo "    App Bundle: ${APP_BUNDLE}"
-echo "    Release:    ${RELEASE_DIR}/ArtCraftStudio-macos-x64.zip"
+echo "    DMG:        ${RELEASE_DIR}/ArtCraftStudio-macos.dmg"
+echo "    ZIP:        ${RELEASE_DIR}/ArtCraftStudio-macos-arm64.zip"
