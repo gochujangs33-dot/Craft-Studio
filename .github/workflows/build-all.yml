@@ -99,10 +99,8 @@ jobs:
         with:
           name: ArtCraftStudio-macOS-Universal
           path: |
-            dist/ArtCraftStudio.app
             release/ArtCraftStudio-macos.dmg
             release/ArtCraftStudio-macos-universal.zip
-            release/ArtCraftStudio-macos-x64.zip
 
   publish-release:
     name: Publish GitHub Release
@@ -116,13 +114,15 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: artifacts
+          merge-multiple: true
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            artifacts/ArtCraftStudio-Windows-x64/*
-            artifacts/ArtCraftStudio-macOS-Universal/*
+            artifacts/*.dmg
+            artifacts/*.zip
+            artifacts/*.exe
           draft: false
           prerelease: false
           generate_release_notes: true
