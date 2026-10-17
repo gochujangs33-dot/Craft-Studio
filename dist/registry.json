@@ -223,6 +223,23 @@
       "website": "https://getartcraft.com/apps/figcraft",
       "extensions": ["fig"],
       "mcp_args": ["mcp"]
+    },
+    {
+      "id": "hop",
+      "prefix": "Hop",
+      "group": "new",
+      "order": 14,
+      "tagline": "Open HWP/HWPX document editor and viewer",
+      "tagline_ko": "HWP/HWPX 한글 문서 열람, 편집 및 PDF 변환",
+      "desc_ko": "한컴오피스 한글(HWP/HWPX) 오픈소스 무료 대체 프로그램 HopCraft(HOP)입니다.\n• 한컴오피스 설치 없이 HWP 및 최신 HWPX 문서 열람/편집 지원\n• rhwp Rust 파싱 엔진 기반의 고속 문서 렌더링 및 저장\n• PDF 내보내기, 인쇄 및 다중 창 문서 작업 지원",
+      "desc_en": "Open-source replacement for Hancom Office Hangul (HWP/HWPX).\n• High-performance HWP and HWPX document viewing and editing\n• Built on the rhwp Rust document parsing engine\n• Export to PDF, print support, and native desktop workflows",
+      "like": "Like Hancom Hangul (HWP)",
+      "like_ko": "한컴오피스 한글(HWP) 대체",
+      "accent": "#1A8CFF",
+      "repo": "https://github.com/golbin/hop",
+      "website": "https://github.com/golbin/hop",
+      "extensions": ["hwp", "hwpx"],
+      "mcp_args": []
     }
   ]
 }

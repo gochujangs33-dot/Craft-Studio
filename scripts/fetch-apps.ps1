@@ -24,7 +24,13 @@ foreach ($app in $registry.apps) {
     $repo = ($app.repo -replace '^https://github.com/', '')
     $rel  = Invoke-RestMethod "https://api.github.com/repos/$repo/releases/latest" -Headers @{ "User-Agent" = "ArtCraftStudio" }
     $asset = $rel.assets | Where-Object { $_.name -like "*-windows-$Arch-portable.zip" } | Select-Object -First 1
-    if (-not $asset) { Write-Warning "[miss] $id has no windows-$Arch portable asset"; continue }
+    if (-not $asset) {
+        $asset = $rel.assets | Where-Object { $_.name -like "*windows*.zip" } | Select-Object -First 1
+    }
+    if (-not $asset) {
+        $asset = $rel.assets | Where-Object { $_.name -like "*windows*$Arch*.exe" -or $_.name -like "*windows*.exe" -or $_.name -like "*.exe" } | Select-Object -First 1
+    }
+    if (-not $asset) { Write-Warning "[miss] $id has no windows-$Arch asset"; continue }
 
     $zip = Join-Path $cacheDir $asset.name
     if (-not (Test-Path $zip)) {
@@ -33,15 +39,20 @@ foreach ($app in $registry.apps) {
     }
 
     if (Test-Path $dest) { Remove-Item $dest -Recurse -Force }
-    $tmp = Join-Path $cacheDir "_x_$id"
-    if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force }
-    Expand-Archive $zip -DestinationPath $tmp -Force
+    if ($zip -match '\.exe$') {
+        New-Item -ItemType Directory -Force $dest | Out-Null
+        Copy-Item $zip (Join-Path $dest "$id.exe") -Force
+    } else {
+        $tmp = Join-Path $cacheDir "_x_$id"
+        if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force }
+        Expand-Archive $zip -DestinationPath $tmp -Force
 
-    # Flatten a single top-level folder if the zip contains one.
-    $items = Get-ChildItem $tmp
-    if ($items.Count -eq 1 -and $items[0].PSIsContainer) { Move-Item $items[0].FullName $dest }
-    else { Move-Item $tmp $dest }
-    if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force }
+        # Flatten a single top-level folder if the zip contains one.
+        $items = Get-ChildItem $tmp
+        if ($items.Count -eq 1 -and $items[0].PSIsContainer) { Move-Item $items[0].FullName $dest }
+        else { Move-Item $tmp $dest }
+        if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force }
+    }
 
     Set-Content (Join-Path $dest ".version") ($rel.tag_name -replace '^v', '') -NoNewline
     Write-Host "[ ok ] $id -> $dest"

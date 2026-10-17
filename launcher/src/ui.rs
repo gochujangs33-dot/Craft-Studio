@@ -27,6 +27,7 @@ const ICONS: &[(&str, &[u8])] = &[
     ("cadcraft", include_bytes!("../assets/icons/cadcraft.png")),
     ("soundcraft", include_bytes!("../assets/icons/soundcraft.png")),
     ("figcraft", include_bytes!("../assets/icons/figcraft.png")),
+    ("hop", include_bytes!("../assets/icons/hop.png")),
 ];
 
 #[derive(PartialEq, Clone, Copy)]
@@ -1064,7 +1065,7 @@ impl Launcher {
         ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             ui.add_space(8.0_f32);
             let s_tag = if ko { "아트크래프트 스위트 전체 소개" } else { "CRAFT APP SUITE" };
-            let s_title = if ko { "13개의 무료 오픈소스 크리에이티브 프로그램. 단 하나의 런처." } else { "Thirteen open-source creative apps. One launcher." };
+            let s_title = if ko { "14개의 무료 오픈소스 크리에이티브 및 오피스 프로그램. 단 하나의 런처." } else { "Fourteen open-source creative and office apps. One launcher." };
             let s_desc = if ko {
                 "모든 Craft 앱은 ArtCraft에 의해 순수 Rust로 작성된 100% 오픈소스(Apache-2.0) 프로그램입니다. \
                  ArtCraft Studio는 모든 프로그램을 하나의 런처로 통합 실행하며, exe 하위 SavedFiles 폴더에 안전하게 작업 파일을 저장합니다."

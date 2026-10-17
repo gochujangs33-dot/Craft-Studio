@@ -91,6 +91,9 @@ if (-not $asset) {
         if (-not $asset) {
             $asset = $rel.assets | Where-Object { $_.name -like "*windows*.zip" } | Select-Object -First 1
         }
+        if (-not $asset) {
+            $asset = $rel.assets | Where-Object { $_.name -like "*windows*$Arch*.exe" -or $_.name -like "*windows*.exe" -or $_.name -like "*.exe" } | Select-Object -First 1
+        }
         if ($asset) {
             Write-Output "PROGRESS:15:공식 릴리스 패키지 발견: $($asset.name)"
         }
@@ -180,9 +183,14 @@ if ($foundLocal) {
     }
 }
 
-Write-Output "PROGRESS:80:압축 파일 해제 중..."
+Write-Output "PROGRESS:80:프로그램 패키지 준비 중..."
 $extractDir = Join-Path $tempDir "extracted"
-Expand-Archive $zipPath -DestinationPath $extractDir -Force
+New-Item -ItemType Directory -Force $extractDir | Out-Null
+if ($zipPath -match '\.exe$') {
+    Copy-Item $zipPath (Join-Path $extractDir "$AppId.exe") -Force
+} else {
+    Expand-Archive $zipPath -DestinationPath $extractDir -Force
+}
 
 # Flatten if single subfolder exists inside zip
 $items = Get-ChildItem $extractDir

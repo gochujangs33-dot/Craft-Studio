@@ -3,6 +3,7 @@
 **/target/
 
 # Distribution artifacts & downloaded apps (fetch via scripts/fetch-apps.ps1)
+/apps/
 /dist/apps/
 /dist/SavedFiles/
 /dist/custom_apps/

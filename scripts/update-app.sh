@@ -38,8 +38,14 @@ if [ -z "$DOWNLOAD_URL" ] && [ -n "$REPO_URL" ]; then
     UPSTREAM_JSON=$(curl -k -L -s --max-time 15 -A "ArtCraftStudio-Updater" "https://api.github.com/repos/${REPO_PATH}/releases/latest" || true)
     LATEST_TAG=$(echo "$UPSTREAM_JSON" | grep -o '"tag_name": *"[^"]*"' | head -n 1 | sed -E 's/.*"v?([^"]*)".*/\1/')
     
-    # Prefer macOS universal DMG
-    APP_PKG=$(echo "$UPSTREAM_JSON" | grep -o '"browser_download_url": *"[^"]*"' | sed -E 's/.*"([^"]+)".*/\1/' | grep -iE "(macos|darwin).*\.dmg" | head -n 1 || true)
+    # Prefer macOS architecture-matching DMG
+    M_ARCH=$(uname -m)
+    if [ "$M_ARCH" = "arm64" ]; then
+        APP_PKG=$(echo "$UPSTREAM_JSON" | grep -o '"browser_download_url": *"[^"]*"' | sed -E 's/.*"([^"]+)".*/\1/' | grep -iE "(arm64|aarch64).*\.dmg" | head -n 1 || true)
+    fi
+    if [ -z "$APP_PKG" ]; then
+        APP_PKG=$(echo "$UPSTREAM_JSON" | grep -o '"browser_download_url": *"[^"]*"' | sed -E 's/.*"([^"]+)".*/\1/' | grep -iE "(macos|darwin).*\.dmg" | head -n 1 || true)
+    fi
     if [ -z "$APP_PKG" ]; then
         APP_PKG=$(echo "$UPSTREAM_JSON" | grep -o '"browser_download_url": *"[^"]*"' | sed -E 's/.*"([^"]+)".*/\1/' | grep -iE "(macos|darwin).*\.(zip|tar\.gz)" | grep -v "cli" | head -n 1 || true)
     fi
