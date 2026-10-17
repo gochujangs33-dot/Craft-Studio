@@ -235,7 +235,9 @@ pub fn scan(reg: &Registry, apps_dir: &Path, exe_dir: &Path, saves_base: &Path) 
             let custom_app_dir = custom_base.join(&meta.id);
             let custom_exe = detect_exe(&custom_app_dir, &meta.id, None);
 
-            // 2. Official search candidates in priority order:
+            #[cfg(target_os = "macos")]
+            let mut candidates = Vec::new();
+            #[cfg(not(target_os = "macos"))]
             #[allow(unused_mut)]
             let mut candidates = vec![
                 apps_dir.join(&meta.id),
@@ -243,19 +245,22 @@ pub fn scan(reg: &Registry, apps_dir: &Path, exe_dir: &Path, saves_base: &Path) 
 
             #[cfg(target_os = "macos")]
             {
-                // Resources inside .app bundle
-                candidates.push(exe_dir.join("../Resources/apps").join(&meta.id));
-                candidates.push(exe_dir.join("../../Resources/apps").join(&meta.id));
-
-                // User Application Support directory
+                // 1. User Application Support directory (updated/downloaded versions take priority!)
                 if let Some(home) = std::env::var_os("HOME") {
                     candidates.push(PathBuf::from(home).join("Library/Application Support/ArtCraftStudio/apps").join(&meta.id));
                 }
 
-                // Portable apps folder next to .app bundle
+                // 2. Portable apps folder next to .app bundle
                 if let Some(parent) = exe_dir.parent().and_then(|p| p.parent()).and_then(|p| p.parent()) {
                     candidates.push(parent.join("apps").join(&meta.id));
                 }
+
+                // 3. apps_dir next to executable
+                candidates.push(apps_dir.join(&meta.id));
+
+                // 4. Resources inside .app bundle (factory pre-installed base versions)
+                candidates.push(exe_dir.join("../Resources/apps").join(&meta.id));
+                candidates.push(exe_dir.join("../../Resources/apps").join(&meta.id));
             }
 
             let mut official_exe = None;
@@ -269,8 +274,8 @@ pub fn scan(reg: &Registry, apps_dir: &Path, exe_dir: &Path, saves_base: &Path) 
                 }
             }
 
-            // If not found yet, ensure official_dir is in a writable location for downloading
-            if official_exe.is_none() {
+            // Ensure destination directory for updating/installing is writable
+            if !is_dir_writable(&official_dir) {
                 official_dir = get_writable_app_dir(apps_dir, &meta.id);
             }
 

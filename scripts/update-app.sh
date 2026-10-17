@@ -1,6 +1,5 @@
 #!/bin/sh
 # In-place Replacement Updater for ArtCraft apps on macOS / Linux
-set -e
 
 APP_ID="$1"
 REPO_URL="$2"
@@ -13,10 +12,21 @@ if [ -z "$APP_ID" ] || [ -z "$DEST_DIR" ]; then
 fi
 
 echo "PROGRESS:5:업데이트 정보 확인 중..."
-mkdir -p "$DEST_DIR"
+
+# Ensure destination directory is writable, fallback to user Application Support if needed
+if [ -n "$HOME" ]; then
+    USER_APP_DIR="${HOME}/Library/Application Support/ArtCraftStudio/apps/${APP_ID}"
+    if [ ! -w "$DEST_DIR" ] && [ ! -w "$(dirname "$DEST_DIR")" ]; then
+        mkdir -p "$USER_APP_DIR" 2>/dev/null || true
+        if [ -w "$USER_APP_DIR" ]; then
+            DEST_DIR="$USER_APP_DIR"
+        fi
+    fi
+fi
+mkdir -p "$DEST_DIR" 2>/dev/null || true
 
 TMP_DIR="/tmp/ArtCraft_Update_${APP_ID}"
-rm -rf "$TMP_DIR"
+rm -rf "$TMP_DIR" 2>/dev/null || true
 mkdir -p "$TMP_DIR"
 
 DOWNLOAD_URL=""
@@ -24,7 +34,7 @@ LATEST_TAG="latest"
 
 # 1. Check user suite repo releases first
 if [ -n "$SUITE_REPO" ]; then
-    SUITE_JSON=$(curl -k -L -s --max-time 15 -A "ArtCraftStudio-Updater" "https://api.github.com/repos/${SUITE_REPO}/releases/latest" || true)
+    SUITE_JSON=$(curl -k -L -s --max-time 15 -A "ArtCraftStudio-Updater" "https://api.github.com/repos/${SUITE_REPO}/releases/latest" 2>/dev/null || true)
     APP_PKG=$(echo "$SUITE_JSON" | grep -o '"browser_download_url": *"[^"]*"' | sed -E 's/.*"([^"]+)".*/\1/' | grep -iE "${APP_ID}.*(macos|darwin).*\.dmg" | head -n 1 || true)
     if [ -z "$APP_PKG" ]; then
         APP_PKG=$(echo "$SUITE_JSON" | grep -o '"browser_download_url": *"[^"]*"' | sed -E 's/.*"([^"]+)".*/\1/' | grep -iE "${APP_ID}.*(macos|darwin|universal).*\.(zip|dmg|tar\.gz)" | head -n 1 || true)
@@ -35,11 +45,11 @@ fi
 # 2. Fallback to upstream repository releases
 if [ -z "$DOWNLOAD_URL" ] && [ -n "$REPO_URL" ]; then
     REPO_PATH=$(echo "$REPO_URL" | sed 's|^https://github.com/||')
-    UPSTREAM_JSON=$(curl -k -L -s --max-time 15 -A "ArtCraftStudio-Updater" "https://api.github.com/repos/${REPO_PATH}/releases/latest" || true)
+    UPSTREAM_JSON=$(curl -k -L -s --max-time 15 -A "ArtCraftStudio-Updater" "https://api.github.com/repos/${REPO_PATH}/releases/latest" 2>/dev/null || true)
     LATEST_TAG=$(echo "$UPSTREAM_JSON" | grep -o '"tag_name": *"[^"]*"' | head -n 1 | sed -E 's/.*"v?([^"]*)".*/\1/')
     
     # Prefer macOS architecture-matching DMG
-    M_ARCH=$(uname -m)
+    M_ARCH=$(uname -m 2>/dev/null || echo "x86_64")
     if [ "$M_ARCH" = "arm64" ]; then
         APP_PKG=$(echo "$UPSTREAM_JSON" | grep -o '"browser_download_url": *"[^"]*"' | sed -E 's/.*"([^"]+)".*/\1/' | grep -iE "(arm64|aarch64).*\.dmg" | head -n 1 || true)
     fi
@@ -47,7 +57,7 @@ if [ -z "$DOWNLOAD_URL" ] && [ -n "$REPO_URL" ]; then
         APP_PKG=$(echo "$UPSTREAM_JSON" | grep -o '"browser_download_url": *"[^"]*"' | sed -E 's/.*"([^"]+)".*/\1/' | grep -iE "(macos|darwin).*\.dmg" | head -n 1 || true)
     fi
     if [ -z "$APP_PKG" ]; then
-        APP_PKG=$(echo "$UPSTREAM_JSON" | grep -o '"browser_download_url": *"[^"]*"' | sed -E 's/.*"([^"]+)".*/\1/' | grep -iE "(macos|darwin).*\.(zip|tar\.gz)" | grep -v "cli" | head -n 1 || true)
+        APP_PKG=$(echo "$UPSTREAM_JSON" | grep -o '"browser_download_url": *"[^"]*"' | sed -E 's/.*"([^"]+)".*/\1/' | grep -iE "(macos|darwin).*\.(zip|tar\.gz)" | head -n 1 || true)
     fi
     if [ -z "$APP_PKG" ]; then
         APP_PKG=$(echo "$UPSTREAM_JSON" | grep -o '"browser_download_url": *"[^"]*"' | sed -E 's/.*"([^"]+)".*/\1/' | grep -iE "(macos|darwin).*\.(zip|dmg|tar\.gz)" | head -n 1 || true)
@@ -56,7 +66,7 @@ if [ -z "$DOWNLOAD_URL" ] && [ -n "$REPO_URL" ]; then
 fi
 
 if [ -z "$DOWNLOAD_URL" ]; then
-    echo "GitHub에서 ${APP_ID} macOS 릴리스 패키지를 찾을 수 없습니다." >&2
+    echo "ERROR: GitHub에서 ${APP_ID} macOS 릴리스 패키지를 찾을 수 없습니다." >&2
     exit 2
 fi
 
@@ -66,52 +76,57 @@ ARCHIVE_PATH="${TMP_DIR}/package.archive"
 # Download using curl
 echo "PROGRESS:25:다운로드 중..."
 curl -k -L --max-time 300 -A "ArtCraftStudio-Updater" "$DOWNLOAD_URL" -o "$ARCHIVE_PATH"
+if [ ! -s "$ARCHIVE_PATH" ]; then
+    echo "ERROR: 패키지 다운로드 실패" >&2
+    exit 3
+fi
 echo "PROGRESS:75:다운로드 완료"
 
 echo "PROGRESS:80:압축 파일 해제 중..."
 EXTRACT_DIR="${TMP_DIR}/extracted"
 mkdir -p "$EXTRACT_DIR"
 
-if echo "$DOWNLOAD_URL" | grep -q '\.zip$'; then
-    unzip -q -o "$ARCHIVE_PATH" -d "$EXTRACT_DIR"
-elif echo "$DOWNLOAD_URL" | grep -q '\.tar\.gz$'; then
-    tar -xzf "$ARCHIVE_PATH" -C "$EXTRACT_DIR"
-elif echo "$DOWNLOAD_URL" | grep -q '\.dmg$'; then
+if echo "$DOWNLOAD_URL" | grep -qi '\.zip$'; then
+    unzip -q -o "$ARCHIVE_PATH" -d "$EXTRACT_DIR" 2>/dev/null || true
+elif echo "$DOWNLOAD_URL" | grep -qi '\.tar\.gz$'; then
+    tar -xzf "$ARCHIVE_PATH" -C "$EXTRACT_DIR" 2>/dev/null || true
+elif echo "$DOWNLOAD_URL" | grep -qi '\.dmg$'; then
     # Mount DMG and copy application bundle
     MOUNT_POINT="${TMP_DIR}/dmg_mount"
     mkdir -p "$MOUNT_POINT"
-    hdiutil attach "$ARCHIVE_PATH" -mountpoint "$MOUNT_POINT" -nobrowse -quiet
-    cp -R "$MOUNT_POINT"/*.app "$EXTRACT_DIR"/ 2>/dev/null || cp -R "$MOUNT_POINT"/* "$EXTRACT_DIR"/ || true
-    hdiutil detach "$MOUNT_POINT" -quiet || true
+    hdiutil attach "$ARCHIVE_PATH" -mountpoint "$MOUNT_POINT" -nobrowse -noautoopen -noverify -quiet 2>/dev/null || true
+    cp -R "$MOUNT_POINT"/*.app "$EXTRACT_DIR"/ 2>/dev/null || cp -R "$MOUNT_POINT"/* "$EXTRACT_DIR"/ 2>/dev/null || true
+    hdiutil detach "$MOUNT_POINT" -force -quiet 2>/dev/null || true
 fi
 
 echo "PROGRESS:90:기존 앱 안전 백업 중..."
 BACKUP_DIR="/tmp/ArtCraft_Backup_${APP_ID}"
-rm -rf "$BACKUP_DIR"
+rm -rf "$BACKUP_DIR" 2>/dev/null || true
 mkdir -p "$BACKUP_DIR"
 if [ -d "$DEST_DIR" ]; then
     cp -R "$DEST_DIR"/* "$BACKUP_DIR"/ 2>/dev/null || true
 fi
 
 echo "PROGRESS:95:최신 프로그램 동일 위치 안전 교체..."
-# Copy extracted content to DEST_DIR
 SOURCE_DIR="$EXTRACT_DIR"
 # If single directory inside and NOT a .app bundle, flatten
-SUB_ITEM=$(find "$EXTRACT_DIR" -mindepth 1 -maxdepth 1 | head -n 1)
-SUB_COUNT=$(find "$EXTRACT_DIR" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')
-if [ "$SUB_COUNT" = "1" ] && [ -d "$SUB_ITEM" ] && ! echo "$SUB_ITEM" | grep -q '\.app$'; then
+SUB_ITEM=$(find "$EXTRACT_DIR" -mindepth 1 -maxdepth 1 2>/dev/null | head -n 1)
+SUB_COUNT=$(find "$EXTRACT_DIR" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l | tr -d ' ')
+if [ "$SUB_COUNT" = "1" ] && [ -d "$SUB_ITEM" ] && ! echo "$SUB_ITEM" | grep -qi '\.app$'; then
     SOURCE_DIR="$SUB_ITEM"
 fi
 
-mkdir -p "$DEST_DIR"
-cp -R "$SOURCE_DIR"/* "$DEST_DIR"/
+mkdir -p "$DEST_DIR" 2>/dev/null || true
+# Clean old .app bundle to prevent directory nesting collision
+rm -rf "$DEST_DIR"/*.app 2>/dev/null || true
+cp -R "$SOURCE_DIR"/* "$DEST_DIR"/ 2>/dev/null || true
 
 # Strip Intel (x86_64) code to keep Apple Silicon (arm64) only
 if command -v lipo >/dev/null 2>&1; then
-    find "$DEST_DIR" -type f | while read -r f; do
+    find "$DEST_DIR" -type f 2>/dev/null | while read -r f; do
         if file "$f" 2>/dev/null | grep -q "Mach-O universal binary"; then
             if lipo -info "$f" 2>/dev/null | grep -q "arm64"; then
-                lipo -thin arm64 "$f" -output "${f}.arm64" 2>/dev/null && mv -f "${f}.arm64" "$f"
+                lipo -thin arm64 "$f" -output "${f}.arm64" 2>/dev/null && mv -f "${f}.arm64" "$f" 2>/dev/null || true
             fi
         fi
     done
@@ -121,11 +136,13 @@ fi
 xattr -cr "$DEST_DIR" 2>/dev/null || true
 chmod -R +x "$DEST_DIR" 2>/dev/null || true
 
-printf "%s" "$LATEST_TAG" > "${DEST_DIR}/.version"
+if [ -n "$LATEST_TAG" ] && [ "$LATEST_TAG" != "latest" ]; then
+    printf "%s" "$LATEST_TAG" > "${DEST_DIR}/.version"
+fi
 
 # Cleanup
-rm -rf "$TMP_DIR"
-rm -rf "$BACKUP_DIR"
+rm -rf "$TMP_DIR" 2>/dev/null || true
+rm -rf "$BACKUP_DIR" 2>/dev/null || true
 
 echo "PROGRESS:100:v${LATEST_TAG} 교체 완료"
 exit 0

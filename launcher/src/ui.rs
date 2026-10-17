@@ -1266,64 +1266,118 @@ impl Launcher {
                             ui.label(RichText::new(note).font(mono(9.5_f32)).color(MUTED));
                         });
                 } else {
-                    // Update Completed Success State
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new("✔").size(26.0_f32).color(OK));
-                        ui.vertical(|ui| {
-                            let comp_txt = if ko {
-                                "소프트웨어 최신 버전 교체가 성공적으로 완료되었습니다!"
-                            } else {
-                                "Software update completed successfully!"
-                            };
-                            ui.label(RichText::new(comp_txt).size(15.0_f32).strong().color(OK));
-                            let sub_txt = if ko {
-                                "동일 위치 안전 교체(In-place Replace) 방식으로 바이너리가 안전하게 갱신되었습니다."
-                            } else {
-                                "App binaries updated to the latest release in-place."
-                            };
-                            ui.label(RichText::new(sub_txt).size(11.0_f32).color(MUTED));
-                        });
-                    });
-
-                    ui.add_space(14.0_f32);
-                    let pb = egui::ProgressBar::new(1.0)
-                        .show_percentage()
-                        .fill(OK)
-                        .corner_radius(4.0_f32);
-                    ui.add_sized(vec2(ui.available_width(), 18.0_f32), pb);
-
-                    ui.add_space(14.0_f32);
-                    Frame::new()
-                        .fill(Color32::from_rgb(0x0C, 0x22, 0x16))
-                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(0x1E, 0x54, 0x38)))
-                        .corner_radius(4.0_f32)
-                        .inner_margin(Margin::symmetric(10, 8))
-                        .show(ui, |ui| {
-                            let ok_sub = if ko {
-                                "작업 파일(SavedFiles) 및 개인 설정이 모두 완벽하게 보존되었습니다."
-                            } else {
-                                "Projects and personal settings in SavedFiles are fully preserved."
-                            };
-                            ui.label(RichText::new(ok_sub).font(mono(9.5_f32)).color(Color32::from_rgb(0xA0, 0xE8, 0xC0)));
+                    let overall_res = self.updater.overall_result();
+                    if let Some((false, err_msg)) = overall_res {
+                        // Update Failed Error State
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("❌").size(26.0_f32).color(ERR));
+                            ui.vertical(|ui| {
+                                let fail_txt = if ko {
+                                    "소프트웨어 업데이트 중 오류가 발생했습니다"
+                                } else {
+                                    "Update failed to complete"
+                                };
+                                ui.label(RichText::new(fail_txt).size(15.0_f32).strong().color(ERR));
+                                ui.label(RichText::new(&err_msg).size(11.0_f32).color(Color32::from_rgb(0xF5, 0x90, 0x90)));
+                            });
                         });
 
-                    ui.add_space(14.0_f32);
-                    ui.horizontal(|ui| {
-                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            let btn_txt = if ko { "확인 및 닫기" } else { "Close" };
-                            let btn = egui::Button::new(RichText::new(btn_txt).font(mono(11.0_f32)).strong().color(BG))
-                                .fill(OK)
-                                .corner_radius(4.0_f32)
-                                .min_size(vec2(130.0_f32, 32.0_f32));
-                            if ui.add(btn).clicked() {
-                                close_requested = true;
-                            }
+                        ui.add_space(14.0_f32);
+                        let pb = egui::ProgressBar::new(1.0)
+                            .show_percentage()
+                            .fill(ERR)
+                            .corner_radius(4.0_f32);
+                        ui.add_sized(vec2(ui.available_width(), 18.0_f32), pb);
+
+                        ui.add_space(14.0_f32);
+                        Frame::new()
+                            .fill(Color32::from_rgb(0x28, 0x10, 0x10))
+                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(0x80, 0x20, 0x20)))
+                            .corner_radius(4.0_f32)
+                            .inner_margin(Margin::symmetric(10, 8))
+                            .show(ui, |ui| {
+                                let fail_sub = if ko {
+                                    "인터넷 연결 또는 저장소 권한을 확인해주세요. 기존 작업 파일은 안전하게 보존되어 있습니다."
+                                } else {
+                                    "Check internet connection or permissions. Existing files are safe."
+                                };
+                                ui.label(RichText::new(fail_sub).font(mono(9.5_f32)).color(Color32::from_rgb(0xF5, 0xA0, 0xA0)));
+                            });
+
+                        ui.add_space(14.0_f32);
+                        ui.horizontal(|ui| {
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                let btn_txt = if ko { "닫기" } else { "Close" };
+                                let btn = egui::Button::new(RichText::new(btn_txt).font(mono(11.0_f32)).strong().color(INK))
+                                    .fill(Color32::from_rgb(0x30, 0x30, 0x38))
+                                    .corner_radius(4.0_f32)
+                                    .min_size(vec2(100.0_f32, 32.0_f32));
+                                if ui.add(btn).clicked() {
+                                    close_requested = true;
+                                }
+                            });
                         });
-                    });
+                    } else {
+                        // Update Completed Success State
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("✔").size(26.0_f32).color(OK));
+                            ui.vertical(|ui| {
+                                let comp_txt = if ko {
+                                    "소프트웨어 최신 버전 교체가 성공적으로 완료되었습니다!"
+                                } else {
+                                    "Software update completed successfully!"
+                                };
+                                ui.label(RichText::new(comp_txt).size(15.0_f32).strong().color(OK));
+                                let sub_txt = if ko {
+                                    "동일 위치 안전 교체(In-place Replace) 방식으로 최신 프로그램 파일이 안전하게 갱신되었습니다."
+                                } else {
+                                    "App binaries updated to the latest release in-place."
+                                };
+                                ui.label(RichText::new(sub_txt).size(11.0_f32).color(MUTED));
+                            });
+                        });
+
+                        ui.add_space(14.0_f32);
+                        let pb = egui::ProgressBar::new(1.0)
+                            .show_percentage()
+                            .fill(OK)
+                            .corner_radius(4.0_f32);
+                        ui.add_sized(vec2(ui.available_width(), 18.0_f32), pb);
+
+                        ui.add_space(14.0_f32);
+                        Frame::new()
+                            .fill(Color32::from_rgb(0x0C, 0x22, 0x16))
+                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(0x1E, 0x54, 0x38)))
+                            .corner_radius(4.0_f32)
+                            .inner_margin(Margin::symmetric(10, 8))
+                            .show(ui, |ui| {
+                                let ok_sub = if ko {
+                                    "작업 파일(SavedFiles) 및 개인 설정이 모두 완벽하게 보존되었습니다."
+                                } else {
+                                    "Projects and personal settings in SavedFiles are fully preserved."
+                                };
+                                ui.label(RichText::new(ok_sub).font(mono(9.5_f32)).color(Color32::from_rgb(0xA0, 0xE8, 0xC0)));
+                            });
+
+                        ui.add_space(14.0_f32);
+                        ui.horizontal(|ui| {
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                let btn_txt = if ko { "확인 및 닫기" } else { "Close" };
+                                let btn = egui::Button::new(RichText::new(btn_txt).font(mono(11.0_f32)).strong().color(BG))
+                                    .fill(OK)
+                                    .corner_radius(4.0_f32)
+                                    .min_size(vec2(130.0_f32, 32.0_f32));
+                                if ui.add(btn).clicked() {
+                                    close_requested = true;
+                                }
+                            });
+                        });
+                    }
                 }
             });
         if close_requested {
             is_open = false;
+            self.updater.clear_results();
         }
         self.show_progress_modal = is_open;
     }
@@ -1731,17 +1785,17 @@ impl Launcher {
     }
 
     fn toasts_ui(&mut self, ctx: &egui::Context) {
-        self.toasts.retain(|t| t.2.elapsed() < Duration::from_secs(4));
+        self.toasts.retain(|t| t.2.elapsed() < Duration::from_secs(6));
         if self.toasts.is_empty() {
             return;
         }
         egui::Area::new(Id::new("toasts"))
             .anchor(Align2::RIGHT_BOTTOM, vec2(-16.0_f32, -40.0_f32))
-            .order(Order::Foreground)
+            .order(Order::Tooltip)
             .interactable(false)
             .show(ctx, |ui| {
                 for (msg, color, born) in &self.toasts {
-                    let a = (1.0_f32 - (born.elapsed().as_secs_f32() - 3.4_f32).max(0.0_f32) / 0.6_f32).clamp(0.0_f32, 1.0_f32);
+                    let a = (1.0_f32 - (born.elapsed().as_secs_f32() - 5.2_f32).max(0.0_f32) / 0.8_f32).clamp(0.0_f32, 1.0_f32);
                     Frame::new()
                         .fill(PANEL.gamma_multiply(a))
                         .stroke(Stroke::new(1.0_f32, color.gamma_multiply(a)))
@@ -1781,9 +1835,10 @@ impl eframe::App for Launcher {
                     self.entries = apps::scan(&self.registry, &self.apps_dir, &self.exe_dir, &self.saves_dir);
                     self.refresh_status();
                     if let Some(e) = self.entries.iter().find(|e| e.meta.id == app_id) {
-                        if let Some(v) = &e.version {
-                            self.updater.mark_updated(&app_id, v);
-                        }
+                        let cur_v = e.version.clone().unwrap_or_else(|| {
+                            self.updater.latest_version(&app_id).unwrap_or_default()
+                        });
+                        self.updater.mark_updated(&app_id, &cur_v);
                     }
                 }
             }

@@ -6,13 +6,13 @@
   "apps": {
     "photocraft": {
       "name": "PhotoCraft",
-      "version": "0.9.1",
-      "asset": "photocraft-0.9.1-windows-x64-portable.zip"
+      "version": "0.9.0",
+      "asset": "photocraft-0.9.0-windows-x64-portable.zip"
     },
     "vectorcraft": {
       "name": "VectorCraft",
-      "version": "0.11.0",
-      "asset": "vectorcraft-0.11.0-windows-x64-portable.zip"
+      "version": "0.12.0",
+      "asset": "vectorcraft-0.12.0-windows-x64-portable.zip"
     },
     "filmcraft": {
       "name": "FilmCraft",
@@ -68,6 +68,11 @@
       "name": "FigCraft",
       "version": "0.6.0",
       "asset": "figcraft-0.6.0-windows-x64-portable.zip"
+    },
+    "hop": {
+      "name": "HopCraft",
+      "version": "0.4.5",
+      "asset": "HOP-windows-x64.exe"
     }
   }
 }

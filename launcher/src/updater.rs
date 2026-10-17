@@ -32,6 +32,7 @@ pub struct UpdateManager {
     in_progress: Arc<Mutex<HashSet<String>>>,
     latest_versions: Arc<Mutex<HashMap<String, String>>>,
     progress: Arc<Mutex<HashMap<String, (f32, String)>>>,
+    last_results: Arc<Mutex<HashMap<String, (bool, String)>>>,
     pub is_checking: bool,
 }
 
@@ -66,7 +67,34 @@ impl UpdateManager {
             in_progress: Arc::new(Mutex::new(HashSet::new())),
             latest_versions: Arc::new(Mutex::new(initial_versions)),
             progress: Arc::new(Mutex::new(HashMap::new())),
+            last_results: Arc::new(Mutex::new(HashMap::new())),
             is_checking: false,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn last_result(&self, app_id: &str) -> Option<(bool, String)> {
+        self.last_results.lock().ok().and_then(|m| m.get(app_id).cloned())
+    }
+
+    pub fn overall_result(&self) -> Option<(bool, String)> {
+        if let Ok(m) = self.last_results.lock() {
+            if m.is_empty() {
+                return None;
+            }
+            if let Some((_, (false, err_msg))) = m.iter().find(|(_, (succ, _))| !*succ) {
+                return Some((false, err_msg.clone()));
+            }
+            if let Some((_, (true, msg))) = m.iter().next() {
+                return Some((true, msg.clone()));
+            }
+        }
+        None
+    }
+
+    pub fn clear_results(&self) {
+        if let Ok(mut m) = self.last_results.lock() {
+            m.clear();
         }
     }
 
@@ -267,7 +295,13 @@ impl UpdateManager {
         let in_progress = Arc::clone(&self.in_progress);
         let progress_store = Arc::clone(&self.progress);
         let latest_store = Arc::clone(&self.latest_versions);
+        let last_results = Arc::clone(&self.last_results);
         let tx = self.sender.clone();
+
+        // Clear previous result for this app
+        if let Ok(mut map) = last_results.lock() {
+            map.remove(&app_id);
+        }
 
         // Initialize progress
         if let Ok(mut map) = progress_store.lock() {
@@ -325,7 +359,18 @@ impl UpdateManager {
                 .spawn();
 
             let mut last_status = None;
+            let mut err_out = String::new();
             if let Ok(mut proc) = child {
+                let stderr_handle = proc.stderr.take();
+                let stderr_thread = std::thread::spawn(move || {
+                    let mut s = String::new();
+                    if let Some(mut err_pipe) = stderr_handle {
+                        use std::io::Read;
+                        let _ = err_pipe.read_to_string(&mut s);
+                    }
+                    s
+                });
+
                 if let Some(stdout) = proc.stdout.take() {
                     use std::io::{BufRead, BufReader};
                     let reader = BufReader::new(stdout);
@@ -343,19 +388,36 @@ impl UpdateManager {
                     }
                 }
                 last_status = proc.wait().ok();
+                err_out = stderr_thread.join().unwrap_or_default();
             }
 
             let (success, msg) = match last_status {
                 Some(s) if s.success() => {
-                    if let Ok(v) = std::fs::read_to_string(dest_dir.join(".version")) {
-                        let v_trim = v.trim().to_string();
-                        if let Ok(mut map) = latest_store.lock() {
-                            map.insert(app_id.clone(), v_trim);
-                        }
+                    let ver_file = dest_dir.join(".version");
+                    let mut ver_str = String::new();
+                    if let Ok(v) = std::fs::read_to_string(&ver_file) {
+                        ver_str = v.trim().to_string();
                     }
-                    (true, format!("{app_id} 최신 버전 업데이트 완료"))
+                    if ver_str.is_empty() {
+                        if let Ok(map) = latest_store.lock() {
+                            if let Some(l) = map.get(&app_id) {
+                                ver_str = l.clone();
+                                let _ = std::fs::write(&ver_file, &ver_str);
+                            }
+                        }
+                    } else if let Ok(mut map) = latest_store.lock() {
+                        map.insert(app_id.clone(), ver_str.clone());
+                    }
+                    (true, format!("{app_id} 최신 버전(v{ver_str}) 업데이트 완료"))
                 }
-                Some(s) => (false, format!("{app_id} 업데이트 실패 (코드: {:?})", s.code())),
+                Some(s) => {
+                    let err_detail = if !err_out.trim().is_empty() {
+                        format!(": {}", err_out.trim())
+                    } else {
+                        String::new()
+                    };
+                    (false, format!("{app_id} 업데이트 실패 (코드: {:?}{err_detail})", s.code()))
+                }
                 None => (false, format!("{app_id} 업데이트 프로세스 실행 실패")),
             };
 
@@ -364,6 +426,9 @@ impl UpdateManager {
             }
             if let Ok(mut map) = progress_store.lock() {
                 map.remove(&app_id);
+            }
+            if let Ok(mut map) = last_results.lock() {
+                map.insert(app_id.clone(), (success, msg.clone()));
             }
 
             let _ = tx.send((app_id, success, msg));
