@@ -241,7 +241,20 @@ Write-Output "PROGRESS:80:프로그램 패키지 준비 중..."
 $extractDir = Join-Path $tempDir "extracted"
 New-Item -ItemType Directory -Force $extractDir | Out-Null
 if ($zipPath -match '\.exe$') {
-    Copy-Item $zipPath (Join-Path $extractDir "$AppId.exe") -Force
+    if ($AppId -eq "hop" -or $zipName -match 'setup|install') {
+        Write-Output "PROGRESS:82:포터블 무설치 패키지 자동 압축 해제 중..."
+        $installProc = Start-Process -FilePath $zipPath -ArgumentList "/S /D=$extractDir" -Wait -PassThru -NoNewWindow
+        Start-Sleep -Seconds 1
+        if (Test-Path (Join-Path $extractDir "uninstall.exe")) {
+            Remove-Item (Join-Path $extractDir "uninstall.exe") -Force -ErrorAction SilentlyContinue
+        }
+        $realExe = Get-ChildItem -Path $extractDir -Filter "*.exe" | Where-Object { $_.Name -notmatch 'uninst|setup|crash|update' } | Select-Object -First 1
+        if ($realExe) {
+            Copy-Item $realExe.FullName (Join-Path $extractDir "$AppId.exe") -Force
+        }
+    } else {
+        Copy-Item $zipPath (Join-Path $extractDir "$AppId.exe") -Force
+    }
 } else {
     Expand-Archive $zipPath -DestinationPath $extractDir -Force
 }
@@ -255,7 +268,7 @@ if ($items.Count -eq 1 -and $items[0].PSIsContainer) {
 
 Write-Output "PROGRESS:88:실행 중인 프로세스 확인 및 안전 종료..."
 # Ensure target process is closed before replacing files
-Get-Process $AppId -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Get-Process -Name $AppId, "${AppId}-desktop", "hop-desktop", "HOP" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 Start-Sleep -Milliseconds 300
 
 Write-Output "PROGRESS:92:기존 바이너리 임시 안전 백업 중..."

@@ -151,20 +151,19 @@ mkdir -p "$DEST_DIR" 2>/dev/null || true
 rm -rf "$DEST_DIR"/*.app 2>/dev/null || true
 cp -R "$SOURCE_DIR"/* "$DEST_DIR"/ 2>/dev/null || true
 
-# Strip Intel (x86_64) code to keep Apple Silicon (arm64) only
-if command -v lipo >/dev/null 2>&1; then
-    find "$DEST_DIR" -type f 2>/dev/null | while read -r f; do
-        if file "$f" 2>/dev/null | grep -q "Mach-O universal binary"; then
-            if lipo -info "$f" 2>/dev/null | grep -q "arm64"; then
-                lipo -thin arm64 "$f" -output "${f}.arm64" 2>/dev/null && mv -f "${f}.arm64" "$f" 2>/dev/null || true
-            fi
+# Remove quarantine attributes and grant execute permissions
+xattr -cr "$DEST_DIR" 2>/dev/null || true
+xattr -dr com.apple.quarantine "$DEST_DIR" 2>/dev/null || true
+chmod -R +x "$DEST_DIR" 2>/dev/null || true
+
+# Re-sign app bundles with ad-hoc signature so macOS Gatekeeper and AMFI allow instant launch without crashing
+if command -v codesign >/dev/null 2>&1; then
+    for app_item in "$DEST_DIR"/*.app "$DEST_DIR"/*/*.app; do
+        if [ -d "$app_item" ]; then
+            codesign --force --deep --sign - "$app_item" 2>/dev/null || true
         fi
     done
 fi
-
-# Remove quarantine attributes and grant execute permissions
-xattr -cr "$DEST_DIR" 2>/dev/null || true
-chmod -R +x "$DEST_DIR" 2>/dev/null || true
 
 if [ -n "$LATEST_TAG" ] && [ "$LATEST_TAG" != "latest" ]; then
     printf "%s" "$LATEST_TAG" > "${DEST_DIR}/.version"

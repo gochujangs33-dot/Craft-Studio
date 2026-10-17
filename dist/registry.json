@@ -238,6 +238,7 @@
       "accent": "#1A8CFF",
       "repo": "https://github.com/golbin/hop",
       "website": "https://github.com/golbin/hop",
+      "exe": "hop.exe",
       "extensions": ["hwp", "hwpx"],
       "mcp_args": []
     }

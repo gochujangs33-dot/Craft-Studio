@@ -387,7 +387,7 @@ fn detect_exe(dir: &Path, id: &str, hint: Option<&str>) -> Option<PathBuf> {
     if let Some(app) = cands.iter().find(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("app"))) {
         return Some(app.clone());
     }
-    const SKIP: [&str; 6] = ["cli", "uninst", "crash", "helper", "update", "server"];
+    const SKIP: [&str; 8] = ["cli", "uninst", "crash", "helper", "update", "server", "setup", "install"];
     cands
         .into_iter()
         .filter(|p| {

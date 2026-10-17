@@ -41,7 +41,24 @@ foreach ($app in $registry.apps) {
     if (Test-Path $dest) { Remove-Item $dest -Recurse -Force }
     if ($zip -match '\.exe$') {
         New-Item -ItemType Directory -Force $dest | Out-Null
-        Copy-Item $zip (Join-Path $dest "$id.exe") -Force
+        if ($id -eq "hop" -or $asset.name -match 'setup|install') {
+            $tmpExtract = Join-Path $cacheDir "_x_$id"
+            if (Test-Path $tmpExtract) { Remove-Item $tmpExtract -Recurse -Force }
+            New-Item -ItemType Directory -Force $tmpExtract | Out-Null
+            Start-Process -FilePath $zip -ArgumentList "/S /D=$tmpExtract" -Wait -NoNewWindow
+            Start-Sleep -Seconds 1
+            if (Test-Path (Join-Path $tmpExtract "uninstall.exe")) {
+                Remove-Item (Join-Path $tmpExtract "uninstall.exe") -Force -ErrorAction SilentlyContinue
+            }
+            Get-ChildItem $tmpExtract | Copy-Item -Destination $dest -Recurse -Force
+            $realExe = Get-ChildItem -Path $dest -Filter "*.exe" | Where-Object { $_.Name -notmatch 'uninst|setup|crash|update' } | Select-Object -First 1
+            if ($realExe) {
+                Copy-Item $realExe.FullName (Join-Path $dest "$id.exe") -Force
+            }
+            Remove-Item $tmpExtract -Recurse -Force -ErrorAction SilentlyContinue
+        } else {
+            Copy-Item $zip (Join-Path $dest "$id.exe") -Force
+        }
     } else {
         $tmp = Join-Path $cacheDir "_x_$id"
         if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force }
