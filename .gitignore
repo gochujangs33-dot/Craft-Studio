@@ -7,11 +7,13 @@
 /dist/SavedFiles/
 /dist/custom_apps/
 /dist/ArtCraftStudio.exe
+/dist/ArtCraftStudio.app/
 /dist/LICENSES/
 
 # Package outputs & temp caches
 /release/
 /.cache/
+/scratch/
 *.log
 
 # Windows / OS metadata

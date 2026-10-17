@@ -21,7 +21,9 @@ fn silent_command(program: &str) -> Command {
     cmd
 }
 
-pub const UPDATE_SCRIPT: &str = include_str!("../../scripts/update-app.ps1");
+pub const UPDATE_SCRIPT_PS1: &str = include_str!("../../scripts/update-app.ps1");
+#[allow(dead_code)]
+pub const UPDATE_SCRIPT_SH: &str = include_str!("../../scripts/update-app.sh");
 
 pub struct UpdateManager {
     _exe_dir: PathBuf,
@@ -127,6 +129,12 @@ impl UpdateManager {
         self.latest_versions.lock().ok().and_then(|map| map.get(app_id).cloned())
     }
 
+    pub fn mark_updated(&self, app_id: &str, current_ver: &str) {
+        if let Ok(mut map) = self.latest_versions.lock() {
+            map.insert(app_id.to_string(), current_ver.to_string());
+        }
+    }
+
     /// Checks GitHub Releases & version.json for all 13 apps in a background thread
     pub fn check_all_updates(&mut self, _repos: Vec<(String, String)>) {
         if self.is_checking {
@@ -140,59 +148,101 @@ impl UpdateManager {
             let mut found = 0;
             let suite_repo = "gochujangs33-dot/Craft-Studio";
 
-            // Multi-tier fast version matching (version.json + releases + upstream)
-            let ps_script = format!(
+            #[cfg(windows)]
+            {
+                // Multi-tier fast version matching (version.json + releases + upstream) with TLS & proxy bypass
+                let ps_script = format!(
                 "$ProgressPreference = 'SilentlyContinue'; \
+                 [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12; \
+                 try {{ [System.Net.ServicePointManager]::ServerCertificateValidationCallback = {{ $true }} }} catch {{}}; \
                  $results = @{{}}; \
                  \
-                 # Tier 1: Check remote version.json manifest \
-                 try {{ \
-                     $vjson = Invoke-RestMethod 'https://raw.githubusercontent.com/{suite_repo}/main/version.json' -Headers @{{ 'User-Agent' = 'ArtCraftStudio' }} -TimeoutSec 5; \
-                     if ($vjson.apps) {{ \
-                         foreach ($prop in $vjson.apps.PSObject.Properties) {{ \
-                             if ($prop.Value.version) {{ $results[$prop.Name] = $prop.Value.version -replace '^v','' }} \
-                         }} \
-                     }} \
-                 }} catch {{}} \
-                 \
-                 # Tier 2: Check GitHub Releases latest assets \
-                 try {{ \
-                     $rel = Invoke-RestMethod 'https://api.github.com/repos/{suite_repo}/releases/latest' -Headers @{{ 'User-Agent' = 'ArtCraftStudio' }} -TimeoutSec 6; \
-                     if ($rel -and $rel.assets) {{ \
-                         foreach ($a in $rel.assets) {{ \
-                             if ($a.name -match '^([a-z0-9]+)-([0-9\\.]+)') {{ \
-                                 $id = $matches[1]; $ver = $matches[2]; \
-                                 $results[$id] = $ver; \
+                 function Fetch-Json([string]$url) {{ \
+                     $tmp = Join-Path $env:TEMP ('artcraft_chk_' + [System.Guid]::NewGuid().ToString('N') + '.json'); \
+                     try {{ \
+                         & curl.exe -k -L -s --max-time 6 -A ArtCraftStudio $url -o $tmp; \
+                         if ($LASTEXITCODE -eq 0 -and (Test-Path $tmp)) {{ \
+                             $raw = Get-Content $tmp -Raw -Encoding UTF8 -ErrorAction SilentlyContinue; \
+                             if ($raw -and ($raw.Trim().StartsWith('{{') -or $raw.Trim().StartsWith('['))) {{ \
+                                 $obj = $raw | ConvertFrom-Json -ErrorAction SilentlyContinue; \
+                                 if ($obj) {{ Remove-Item $tmp -Force -ErrorAction SilentlyContinue; return $obj }} \
                              }} \
                          }} \
+                     }} catch {{}} \
+                     finally {{ if (Test-Path $tmp) {{ Remove-Item $tmp -Force -ErrorAction SilentlyContinue }} }} \
+                     try {{ return (Invoke-RestMethod $url -Headers @{{ 'User-Agent' = 'ArtCraftStudio' }} -TimeoutSec 6) }} catch {{ return $null }} \
+                 }} \
+                 \
+                 # Tier 1: Check remote version.json manifest \
+                 $vjson = Fetch-Json 'https://raw.githubusercontent.com/{suite_repo}/main/version.json'; \
+                 if ($vjson -and $vjson.apps) {{ \
+                     foreach ($prop in $vjson.apps.PSObject.Properties) {{ \
+                         if ($prop.Value.version) {{ $results[$prop.Name] = $prop.Value.version -replace '^v','' }} \
                      }} \
-                 }} catch {{}} \
+                 }} \
+                 \
+                 # Tier 2: Check GitHub Releases latest assets \
+                 $rel = Fetch-Json 'https://api.github.com/repos/{suite_repo}/releases/latest'; \
+                 if ($rel -and $rel.assets) {{ \
+                     foreach ($a in $rel.assets) {{ \
+                         if ($a.name -match '^([a-z0-9]+)-([0-9\\.]+)') {{ \
+                             $id = $matches[1]; $ver = $matches[2]; \
+                             $results[$id] = $ver; \
+                         }} \
+                     }} \
+                 }} \
                  \
                  # Output gathered versions as id=ver lines \
                  foreach ($k in $results.Keys) {{ \"$k=$($results[$k])\" }}"
             );
 
-            let output = silent_command("powershell")
-                .args(["-NoProfile", "-NonInteractive", "-Command", &ps_script])
-                .output()
-                .ok()
-                .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
-                .unwrap_or_default();
 
-            let mut gathered = HashMap::new();
-            for line in output.lines() {
-                if let Some((k, v)) = line.trim().split_once('=') {
-                    if !k.is_empty() && !v.is_empty() {
-                        gathered.insert(k.to_string(), v.to_string());
+
+                let output = silent_command("powershell")
+                    .args(["-NoProfile", "-NonInteractive", "-Command", &ps_script])
+                    .output()
+                    .ok()
+                    .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+                    .unwrap_or_default();
+
+                let mut gathered = HashMap::new();
+                for line in output.lines() {
+                    if let Some((k, v)) = line.trim().split_once('=') {
+                        if !k.is_empty() && !v.is_empty() {
+                            gathered.insert(k.to_string(), v.to_string());
+                        }
+                    }
+                }
+
+                if let Ok(mut map) = latest_store.lock() {
+                    for (id, ver) in &gathered {
+                        map.insert(id.clone(), ver.clone());
+                        found += 1;
                     }
                 }
             }
 
-            // Fill gathered versions from user suite repository
-            if let Ok(mut map) = latest_store.lock() {
-                for (id, ver) in &gathered {
-                    map.insert(id.clone(), ver.clone());
-                    found += 1;
+            #[cfg(not(windows))]
+            {
+                let sh_script = format!(
+                    "curl -sL --max-time 10 https://raw.githubusercontent.com/{suite_repo}/main/version.json 2>/dev/null || true"
+                );
+                let output = silent_command("sh")
+                    .args(["-c", &sh_script])
+                    .output()
+                    .ok()
+                    .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+                    .unwrap_or_default();
+
+                if let Ok(v) = serde_json::from_str::<HashMap<String, serde_json::Value>>(&output) {
+                    if let Ok(mut map) = latest_store.lock() {
+                        for (k, val) in v {
+                            if let Some(s) = val.as_str() {
+                                map.insert(k, s.to_string());
+                                found += 1;
+                            }
+                        }
+                    }
                 }
             }
 
@@ -216,6 +266,7 @@ impl UpdateManager {
         let dest_dir = dest_dir.to_path_buf();
         let in_progress = Arc::clone(&self.in_progress);
         let progress_store = Arc::clone(&self.progress);
+        let latest_store = Arc::clone(&self.latest_versions);
         let tx = self.sender.clone();
 
         // Initialize progress
@@ -224,13 +275,25 @@ impl UpdateManager {
         }
 
         // Ensure update script exists on disk
+        #[cfg(windows)]
         let script_path = std::env::temp_dir().join("artcraft_update_app.ps1");
-        let _ = std::fs::write(&script_path, UPDATE_SCRIPT);
+        #[cfg(windows)]
+        let _ = std::fs::write(&script_path, UPDATE_SCRIPT_PS1);
+
+        #[cfg(not(windows))]
+        let script_path = std::env::temp_dir().join("artcraft_update_app.sh");
+        #[cfg(not(windows))]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::write(&script_path, UPDATE_SCRIPT_SH);
+            let _ = std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755));
+        }
 
         thread::spawn(move || {
             let script_str = script_path.display().to_string();
             let dest_str = dest_dir.display().to_string();
 
+            #[cfg(windows)]
             let child = silent_command("powershell")
                 .args([
                     "-NoProfile",
@@ -243,6 +306,18 @@ impl UpdateManager {
                     "-RepoUrl",
                     &repo_url,
                     "-DestDir",
+                    &dest_str,
+                ])
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn();
+
+            #[cfg(not(windows))]
+            let child = silent_command("sh")
+                .args([
+                    &script_str,
+                    &app_id,
+                    &repo_url,
                     &dest_str,
                 ])
                 .stdout(std::process::Stdio::piped())
@@ -271,7 +346,15 @@ impl UpdateManager {
             }
 
             let (success, msg) = match last_status {
-                Some(s) if s.success() => (true, format!("{app_id} 최신 버전 업데이트 완료")),
+                Some(s) if s.success() => {
+                    if let Ok(v) = std::fs::read_to_string(dest_dir.join(".version")) {
+                        let v_trim = v.trim().to_string();
+                        if let Ok(mut map) = latest_store.lock() {
+                            map.insert(app_id.clone(), v_trim);
+                        }
+                    }
+                    (true, format!("{app_id} 최신 버전 업데이트 완료"))
+                }
                 Some(s) => (false, format!("{app_id} 업데이트 실패 (코드: {:?})", s.code())),
                 None => (false, format!("{app_id} 업데이트 프로세스 실행 실패")),
             };

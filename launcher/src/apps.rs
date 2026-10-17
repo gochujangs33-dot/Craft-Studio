@@ -40,6 +40,10 @@ pub struct AppMeta {
     /// Optional explicit executable path relative to `apps/<id>/`.
     #[serde(default)]
     pub exe: Option<String>,
+    /// Arguments that start the app's built-in MCP server via `<id>-cli`.
+    /// `{saves}` is replaced with the app's SavedFiles folder.
+    #[serde(default)]
+    pub mcp_args: Vec<String>,
 }
 
 impl AppMeta {
@@ -134,8 +138,7 @@ pub fn find_custom_apps_dir(exe_dir: &Path) -> PathBuf {
     custom
 }
 
-pub fn scan(reg: &Registry, apps_dir: &Path, exe_dir: &Path) -> Vec<AppEntry> {
-    let saves_base = find_saves_dir(exe_dir);
+pub fn scan(reg: &Registry, apps_dir: &Path, exe_dir: &Path, saves_base: &Path) -> Vec<AppEntry> {
     let custom_base = find_custom_apps_dir(exe_dir);
 
     let mut out: Vec<AppEntry> = reg
@@ -189,16 +192,24 @@ pub fn scan(reg: &Registry, apps_dir: &Path, exe_dir: &Path) -> Vec<AppEntry> {
 fn detect_exe(dir: &Path, id: &str, hint: Option<&str>) -> Option<PathBuf> {
     if let Some(h) = hint {
         let p = dir.join(h);
-        if p.is_file() {
+        if p.is_file() || (p.is_dir() && p.extension().is_some_and(|e| e.eq_ignore_ascii_case("app"))) {
             return Some(p);
         }
     }
     let mut cands = Vec::new();
     collect_exes(dir, 0, &mut cands);
-    let want = format!("{id}.exe");
+    let want_exe = format!("{id}.exe");
+    let want_app = format!("{id}.app");
     if let Some(p) = cands
         .iter()
-        .find(|p| p.file_name().is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case(&want)))
+        .find(|p| {
+            p.file_name().is_some_and(|n| {
+                let s = n.to_string_lossy();
+                s.eq_ignore_ascii_case(&want_exe)
+                    || s.eq_ignore_ascii_case(&want_app)
+                    || s.eq_ignore_ascii_case(id)
+            })
+        })
     {
         return Some(p.clone());
     }
@@ -220,9 +231,23 @@ fn collect_exes(dir: &Path, depth: u32, out: &mut Vec<PathBuf>) {
     for ent in rd.flatten() {
         let p = ent.path();
         if p.is_dir() {
-            collect_exes(&p, depth + 1, out);
+            if p.extension().is_some_and(|e| e.eq_ignore_ascii_case("app")) {
+                out.push(p);
+            } else {
+                collect_exes(&p, depth + 1, out);
+            }
         } else if p.extension().is_some_and(|e| e.eq_ignore_ascii_case("exe")) {
             out.push(p);
+        } else {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if let Ok(m) = ent.metadata() {
+                    if m.is_file() && (m.permissions().mode() & 0o111 != 0) {
+                        out.push(p);
+                    }
+                }
+            }
         }
     }
 }
@@ -253,6 +278,21 @@ impl Runner {
         save_dir: &Path,
         file: Option<&Path>,
     ) -> std::io::Result<u32> {
+        #[cfg(target_os = "macos")]
+        if exe.extension().is_some_and(|e| e.eq_ignore_ascii_case("app")) {
+            let mut cmd = Command::new("open");
+            cmd.arg("-n").arg(exe);
+            if let Some(f) = file {
+                cmd.arg("--args").arg(f);
+            }
+            cmd.env("ARTCRAFT_PROJECTS_DIR", save_dir);
+            cmd.env("ARTCRAFT_SAVES_DIR", save_dir);
+            let child = cmd.spawn()?;
+            let pid = child.id();
+            self.children.entry(id.to_string()).or_default().push(child);
+            return Ok(pid);
+        }
+
         let mut cmd = Command::new(exe);
 
         // Sets current working directory to the user's SavedFiles/<AppName> folder
@@ -358,6 +398,8 @@ pub struct State {
     pub minimize_on_open: bool,
     #[serde(default = "default_lang")]
     pub language: String, // "ko" or "en"
+    #[serde(default)]
+    pub custom_saves_dir: Option<String>,
 }
 
 fn default_lang() -> String {
@@ -372,15 +414,38 @@ impl Default for State {
             sort: 0,
             minimize_on_open: false,
             language: "ko".to_string(),
+            custom_saves_dir: None,
         }
     }
 }
 
 pub fn data_dir() -> PathBuf {
-    std::env::var_os("APPDATA")
-        .map(PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir)
-        .join("ArtCraftStudio")
+    #[cfg(windows)]
+    {
+        std::env::var_os("APPDATA")
+            .map(PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir)
+            .join("ArtCraftStudio")
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .map(|h| h.join("Library/Application Support/ArtCraftStudio"))
+            .unwrap_or_else(|| std::env::temp_dir().join("ArtCraftStudio"))
+    }
+    #[cfg(all(not(windows), not(target_os = "macos")))]
+    {
+        std::env::var_os("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                std::env::var_os("HOME")
+                    .map(PathBuf::from)
+                    .map(|h| h.join(".local/share"))
+                    .unwrap_or_else(std::env::temp_dir)
+            })
+            .join("ArtCraftStudio")
+    }
 }
 
 impl State {

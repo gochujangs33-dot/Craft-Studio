@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod apps;
+mod ai_connect;
 mod theme;
 mod ui;
 mod updater;
@@ -9,10 +10,41 @@ use eframe::egui;
 use std::path::PathBuf;
 
 fn main() -> eframe::Result<()> {
-    let exe_dir = std::env::current_exe()
+    let raw_exe_dir = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|p| p.to_path_buf()))
         .unwrap_or_else(|| PathBuf::from("."));
+
+    // If running inside a macOS .app bundle (Contents/MacOS), check for bundle parent or Resources
+    let exe_dir = {
+        #[cfg(target_os = "macos")]
+        {
+            if raw_exe_dir.ends_with("Contents/MacOS") {
+                let bundle_dir = raw_exe_dir.parent().and_then(|p| p.parent());
+                if let Some(parent) = bundle_dir.and_then(|p| p.parent()) {
+                    if parent.join("apps").exists() || parent.join("registry.json").exists() {
+                        parent.to_path_buf()
+                    } else if let Some(res) = raw_exe_dir.parent().map(|p| p.join("Resources")) {
+                        if res.join("apps").exists() || res.join("registry.json").exists() {
+                            res
+                        } else {
+                            parent.to_path_buf()
+                        }
+                    } else {
+                        parent.to_path_buf()
+                    }
+                } else {
+                    raw_exe_dir
+                }
+            } else {
+                raw_exe_dir
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            raw_exe_dir
+        }
+    };
 
     // Files passed on the command line (e.g. "Open with" / drag onto the exe)
     // are routed to the matching Craft app after the launcher appears.

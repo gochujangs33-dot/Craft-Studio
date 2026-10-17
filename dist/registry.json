@@ -17,7 +17,8 @@
       "accent": "#3E7BFA",
       "repo": "https://github.com/storytold/photocraft",
       "website": "https://getartcraft.com/apps/photocraft",
-      "extensions": ["psd", "psb", "png", "jpg", "jpeg", "webp", "tif", "tiff", "bmp", "gif"]
+      "extensions": ["psd", "psb", "png", "jpg", "jpeg", "webp", "tif", "tiff", "bmp", "gif"],
+      "mcp_args": ["mcp", "--automation-read-root", "{saves}", "--automation-write-root", "{saves}"]
     },
     {
       "id": "vectorcraft",
@@ -33,7 +34,8 @@
       "accent": "#F2553D",
       "repo": "https://github.com/storytold/vectorcraft",
       "website": "https://getartcraft.com/apps/vectorcraft",
-      "extensions": ["svg", "ai", "eps"]
+      "extensions": ["svg", "ai", "eps"],
+      "mcp_args": ["mcp", "--headless", "--automation-read-root", "{saves}", "--automation-write-root", "{saves}"]
     },
     {
       "id": "filmcraft",
@@ -49,7 +51,8 @@
       "accent": "#9B6BFF",
       "repo": "https://github.com/storytold/filmcraft",
       "website": "https://getartcraft.com/apps/filmcraft",
-      "extensions": ["prproj", "mp4", "mov", "mkv", "avi", "webm"]
+      "extensions": ["prproj", "mp4", "mov", "mkv", "avi", "webm"],
+      "mcp_args": ["mcp"]
     },
     {
       "id": "lightcraft",
@@ -65,7 +68,8 @@
       "accent": "#F5A623",
       "repo": "https://github.com/storytold/lightcraft",
       "website": "https://getartcraft.com/apps/lightcraft",
-      "extensions": ["dng", "cr2", "cr3", "nef", "arw", "raf", "orf", "rw2", "xmp"]
+      "extensions": ["dng", "cr2", "cr3", "nef", "arw", "raf", "orf", "rw2", "xmp"],
+      "mcp_args": ["mcp"]
     },
     {
       "id": "pdfcraft",
@@ -81,7 +85,8 @@
       "accent": "#2EC4A0",
       "repo": "https://github.com/storytold/pdfcraft",
       "website": "https://getartcraft.com/apps/pdfcraft",
-      "extensions": ["pdf"]
+      "extensions": ["pdf"],
+      "mcp_args": ["mcp", "--root", "{saves}"]
     },
     {
       "id": "effectcraft",
@@ -97,7 +102,8 @@
       "accent": "#F0479B",
       "repo": "https://github.com/storytold/effectcraft",
       "website": "https://getartcraft.com/apps/effectcraft",
-      "extensions": ["aep", "lottie"]
+      "extensions": ["aep", "lottie"],
+      "mcp_args": ["mcp"]
     },
     {
       "id": "designcraft",
@@ -113,7 +119,8 @@
       "accent": "#9BD13A",
       "repo": "https://github.com/storytold/designcraft",
       "website": "https://getartcraft.com/apps/designcraft",
-      "extensions": ["indd", "idml"]
+      "extensions": ["indd", "idml"],
+      "mcp_args": ["mcp"]
     },
     {
       "id": "wordcraft",
@@ -129,7 +136,8 @@
       "accent": "#4C7DF0",
       "repo": "https://github.com/storytold/wordcraft",
       "website": "https://getartcraft.com/apps/wordcraft",
-      "extensions": ["docx", "doc", "rtf", "odt", "txt", "md"]
+      "extensions": ["docx", "doc", "rtf", "odt", "txt", "md"],
+      "mcp_args": ["mcp", "--automation-read-root", "{saves}", "--automation-write-root", "{saves}"]
     },
     {
       "id": "deckcraft",
@@ -145,7 +153,8 @@
       "accent": "#F57C2B",
       "repo": "https://github.com/storytold/deckcraft",
       "website": "https://getartcraft.com/apps/deckcraft",
-      "extensions": ["pptx", "ppt", "odp", "key"]
+      "extensions": ["pptx", "ppt", "odp", "key"],
+      "mcp_args": ["mcp"]
     },
     {
       "id": "gridcraft",
@@ -161,7 +170,8 @@
       "accent": "#2FB55D",
       "repo": "https://github.com/storytold/gridcraft",
       "website": "https://getartcraft.com/apps/gridcraft",
-      "extensions": ["xlsx", "xls", "csv", "ods", "tsv"]
+      "extensions": ["xlsx", "xls", "csv", "ods", "tsv"],
+      "mcp_args": ["mcp"]
     },
     {
       "id": "cadcraft",
@@ -177,7 +187,8 @@
       "accent": "#1FA6C9",
       "repo": "https://github.com/storytold/cadcraft",
       "website": "https://getartcraft.com/apps/cadcraft",
-      "extensions": ["dwg", "dxf"]
+      "extensions": ["dwg", "dxf"],
+      "mcp_args": ["mcp"]
     },
     {
       "id": "soundcraft",
@@ -193,7 +204,8 @@
       "accent": "#3DD6C6",
       "repo": "https://github.com/storytold/soundcraft",
       "website": "https://getartcraft.com/apps/soundcraft",
-      "extensions": ["wav", "mp3", "flac", "ogg", "aif", "aiff", "ptx"]
+      "extensions": ["wav", "mp3", "flac", "ogg", "aif", "aiff", "ptx"],
+      "mcp_args": ["mcp", "--automation-read-root", "{saves}", "--automation-write-root", "{saves}"]
     },
     {
       "id": "figcraft",
@@ -209,7 +221,8 @@
       "accent": "#B46CF7",
       "repo": "https://github.com/storytold/figcraft",
       "website": "https://getartcraft.com/apps/figcraft",
-      "extensions": ["fig"]
+      "extensions": ["fig"],
+      "mcp_args": ["mcp"]
     }
   ]
 }

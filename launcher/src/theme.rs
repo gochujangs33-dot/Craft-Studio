@@ -35,12 +35,17 @@ pub fn mono(size: f32) -> FontId {
 pub fn apply(ctx: &egui::Context) {
     // ------------------------------------------------ fonts (Korean support)
     let mut fonts = FontDefinitions::default();
-    let malgun_paths = [
+    let font_paths = [
+        // macOS fonts
+        "/System/Library/Fonts/AppleSDGothicNeo.ttc",
+        "/System/Library/Fonts/Supplemental/AppleGothic.ttf",
+        "/Library/Fonts/AppleSDGothicNeo.ttc",
+        // Windows fonts
         "C:\\Windows\\Fonts\\malgun.ttf",
         "C:\\Windows\\Fonts\\malgunbd.ttf",
         "C:\\Windows\\Fonts\\gulim.ttc",
     ];
-    for p in malgun_paths {
+    for p in font_paths {
         if let Ok(data) = std::fs::read(p) {
             fonts.font_data.insert("korean_font".to_owned(), Arc::new(FontData::from_owned(data)));
             fonts

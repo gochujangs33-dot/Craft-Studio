@@ -1,4 +1,4 @@
-# In-place Replacement Updater for ArtCraft apps (3M-style inplace replace)
+# In-place Replacement Updater for ArtCraft apps
 param(
     [Parameter(Mandatory=$true)]
     [string]$AppId,
@@ -17,6 +17,40 @@ param(
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
+# Enable TLS 1.2 and trust certificate for environments behind corporate / Zscaler SSL inspection
+[System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
+try {
+    [System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
+} catch {}
+
+function Get-RemoteJson([string]$Url) {
+    # 1. Try curl.exe with -k (bypasses untrusted root cert / corporate SSL inspection) and -A
+    $tmpJson = Join-Path $env:TEMP ("artcraft_net_" + [System.Guid]::NewGuid().ToString("N") + ".json")
+    try {
+        & curl.exe -k -L -s --max-time 15 -A "ArtCraftStudio-Updater" "$Url" -o "$tmpJson"
+        if ($LASTEXITCODE -eq 0 -and (Test-Path $tmpJson)) {
+            $raw = Get-Content $tmpJson -Raw -Encoding UTF8 -ErrorAction SilentlyContinue
+            if ($raw -and ($raw.Trim().StartsWith("{") -or $raw.Trim().StartsWith("["))) {
+                $obj = $raw | ConvertFrom-Json -ErrorAction SilentlyContinue
+                if ($obj) {
+                    Remove-Item $tmpJson -Force -ErrorAction SilentlyContinue
+                    return $obj
+                }
+            }
+        }
+    } catch {}
+    finally {
+        if (Test-Path $tmpJson) { Remove-Item $tmpJson -Force -ErrorAction SilentlyContinue }
+    }
+
+    # 2. Fallback to Invoke-RestMethod with TLS 1.2
+    try {
+        return (Invoke-RestMethod $Url -Headers @{ "User-Agent" = "ArtCraftStudio-Updater" } -TimeoutSec 15)
+    } catch {
+        return $null
+    }
+}
+
 Write-Output "PROGRESS:5:업데이트 정보 확인 중..."
 
 # Make sure destination exists
@@ -24,50 +58,52 @@ if (-not (Test-Path $DestDir)) {
     New-Item -ItemType Directory -Force $DestDir | Out-Null
 }
 
-$headers = @{ "User-Agent" = "ArtCraftStudio-Updater" }
 $asset = $null
 $latestTag = "latest"
 
 # 1. First check user's suite repo (https://github.com/gochujangs33-dot/Craft-Studio/releases)
 if ($SuiteRepo) {
-    try {
-        $suiteRel = Invoke-RestMethod "https://api.github.com/repos/$SuiteRepo/releases/latest" -Headers $headers -TimeoutSec 10
-        if ($suiteRel -and $suiteRel.assets) {
-            $suiteAsset = $suiteRel.assets | Where-Object { 
-                $_.name -like "$AppId-*.zip" -or $_.name -like "$AppId.zip" -or $_.name -like "$AppId-windows*.zip"
-            } | Select-Object -First 1
+    $suiteRel = Get-RemoteJson "https://api.github.com/repos/$SuiteRepo/releases/latest"
+    if ($suiteRel -and $suiteRel.assets) {
+        $suiteAsset = $suiteRel.assets | Where-Object { 
+            $_.name -like "$AppId-*.zip" -or $_.name -like "$AppId.zip" -or $_.name -like "$AppId-windows*.zip"
+        } | Select-Object -First 1
 
-            if ($suiteAsset) {
-                Write-Output "PROGRESS:15:릴리스 패키지 발견: $($suiteAsset.name)"
-                $asset = $suiteAsset
-                if ($suiteAsset.name -match "$AppId-([0-9\.]+)") {
-                    $latestTag = $matches[1]
-                } else {
-                    $latestTag = ($suiteRel.tag_name -replace '^v', '')
-                }
+        if ($suiteAsset) {
+            Write-Output "PROGRESS:15:릴리스 패키지 발견: $($suiteAsset.name)"
+            $asset = $suiteAsset
+            if ($suiteAsset.name -match "$AppId-([0-9\.]+)") {
+                $latestTag = $matches[1]
+            } else {
+                $latestTag = ($suiteRel.tag_name -replace '^v', '')
             }
         }
-    } catch {}
+    }
 }
 
 # 2. Fallback to upstream official repo (storytold/<id>)
 if (-not $asset) {
     $repoPath = ($RepoUrl -replace '^https://github.com/', '')
-    try {
-        $rel = Invoke-RestMethod "https://api.github.com/repos/$repoPath/releases/latest" -Headers $headers -TimeoutSec 15
-        $latestTag = $rel.tag_name -replace '^v', ''
+    $rel = Get-RemoteJson "https://api.github.com/repos/$repoPath/releases/latest"
+    if ($rel -and $rel.assets) {
+        $latestTag = ($rel.tag_name -replace '^v', '')
         $asset = $rel.assets | Where-Object { $_.name -like "*-windows-$Arch-portable.zip" } | Select-Object -First 1
         if (-not $asset) {
             $asset = $rel.assets | Where-Object { $_.name -like "*windows*.zip" } | Select-Object -First 1
         }
-    } catch {
-        Write-Error "Failed to fetch release info from GitHub: $_"
-        exit 1
+        if ($asset) {
+            Write-Output "PROGRESS:15:공식 릴리스 패키지 발견: $($asset.name)"
+        }
     }
 }
 
+if (-not $asset) {
+    Write-Error "GitHub에서 $AppId 릴리스 패키지 정보를 찾을 수 없습니다."
+    exit 2
+}
+
 $tempDir = Join-Path $env:TEMP "ArtCraft_Update_$AppId"
-if (Test-Path $tempDir) { Remove-Item $tempDir -Recurse -Force }
+if (Test-Path $tempDir) { Remove-Item $tempDir -Recurse -Force -ErrorAction SilentlyContinue }
 New-Item -ItemType Directory -Force $tempDir | Out-Null
 
 $zipName = if ($asset) { $asset.name } else { "$AppId-$latestTag-windows-x64-portable.zip" }
@@ -86,49 +122,61 @@ foreach ($la in $localAssets) {
 }
 
 if ($foundLocal) {
-    Write-Output "PROGRESS:25:패키지 복사 중..."
+    Write-Output "PROGRESS:25:로컬 패키지 복사 중..."
     Copy-Item $foundLocal -Destination $zipPath -Force
-    Write-Output "PROGRESS:70:다운로드 완료"
+    Write-Output "PROGRESS:75:다운로드 완료"
 } else {
-    if (-not $asset) {
-        Write-Error "No Windows portable asset found for $AppId"
-        exit 2
-    }
     Write-Output "PROGRESS:20:다운로드 서버 연결 중..."
-    try {
-        $req = [System.Net.HttpWebRequest]::Create($asset.browser_download_url)
-        $req.UserAgent = "ArtCraftStudio-Updater"
-        $req.Timeout = 120000
-        $res = $req.GetResponse()
-        $totalBytes = $res.ContentLength
-        $inStream = $res.GetResponseStream()
-        $outStream = [System.IO.File]::Create($zipPath)
-        $buffer = New-Object byte[] 65536
-        $totalRead = 0
-        $lastReport = 20
+    $downloadUrl = $asset.browser_download_url
+    $expectedBytes = if ($asset.size) { [int64]$asset.size } else { 0 }
+    $downloadOk = $false
 
-        while (($read = $inStream.Read($buffer, 0, $buffer.Length)) -gt 0) {
-            $outStream.Write($buffer, 0, $read)
-            $totalRead += $read
-            if ($totalBytes -gt 0) {
-                $pct = [math]::Floor(20 + ($totalRead / $totalBytes) * 55)
-                if ($pct -gt $lastReport + 2 -or $pct -eq 75) {
+    # Method 1: curl.exe in background with live progress tracking
+    try {
+        $pinfo = New-Object System.Diagnostics.ProcessStartInfo
+        $pinfo.FileName = "curl.exe"
+        $pinfo.Arguments = "-k -L --max-time 300 -A ArtCraftStudio-Updater `"$downloadUrl`" -o `"$zipPath`""
+        $pinfo.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
+        $pinfo.CreateNoWindow = $true
+        $pinfo.UseShellExecute = $false
+        $proc = [System.Diagnostics.Process]::Start($pinfo)
+
+        $lastReport = 20
+        while (-not $proc.HasExited) {
+            Start-Sleep -Milliseconds 350
+            if ((Test-Path $zipPath) -and $expectedBytes -gt 0) {
+                $curLen = (Get-Item $zipPath).Length
+                $pct = [math]::Floor(20 + ($curLen / $expectedBytes) * 55)
+                if ($pct -gt $lastReport + 1) {
                     $lastReport = $pct
-                    $mbGot = [math]::Round($totalRead / 1MB, 1)
-                    $mbTot = [math]::Round($totalBytes / 1MB, 1)
+                    $mbGot = [math]::Round($curLen / 1MB, 1)
+                    $mbTot = [math]::Round($expectedBytes / 1MB, 1)
                     Write-Output "PROGRESS:$pct:다운로드 중 ($mbGot MB / $mbTot MB)"
                 }
             }
         }
-        $outStream.Close()
-        $inStream.Close()
-        $res.Close()
-        Write-Output "PROGRESS:75:다운로드 완료"
-    } catch {
-        # Fallback to Invoke-WebRequest
-        Write-Output "PROGRESS:40:다운로드 진행 중..."
-        Invoke-WebRequest $asset.browser_download_url -OutFile $zipPath -UseBasicParsing -TimeoutSec 120
-        Write-Output "PROGRESS:75:다운로드 완료"
+        $proc.WaitForExit()
+        if ($proc.ExitCode -eq 0 -and (Test-Path $zipPath) -and (Get-Item $zipPath).Length -gt 1000) {
+            $downloadOk = $true
+            Write-Output "PROGRESS:75:다운로드 완료"
+        }
+    } catch {}
+
+    # Method 2: Fallback to .NET WebClient with Certificate bypass
+    if (-not $downloadOk) {
+        Write-Output "PROGRESS:35:대체 다운로드 채널 연결 중..."
+        try {
+            $wc = New-Object System.Net.WebClient
+            $wc.Headers.Add("User-Agent", "ArtCraftStudio-Updater")
+            $wc.DownloadFile($downloadUrl, $zipPath)
+            if ((Test-Path $zipPath) -and (Get-Item $zipPath).Length -gt 1000) {
+                $downloadOk = $true
+                Write-Output "PROGRESS:75:다운로드 완료"
+            }
+        } catch {
+            Write-Error "다운로드 실패: $_"
+            exit 3
+        }
     }
 }
 

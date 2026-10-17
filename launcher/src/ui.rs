@@ -10,6 +10,9 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
 const ICONS: &[(&str, &[u8])] = &[
     ("photocraft", include_bytes!("../assets/icons/photocraft.png")),
     ("vectorcraft", include_bytes!("../assets/icons/vectorcraft.png")),
@@ -55,6 +58,7 @@ pub struct Launcher {
     registry: Registry,
     apps_dir: PathBuf,
     saves_dir: PathBuf,
+    saves_dir_input: String,
     custom_apps_dir: PathBuf,
     entries: Vec<AppEntry>,
     icons: HashMap<String, TextureHandle>,
@@ -93,15 +97,20 @@ impl Launcher {
         apply(&cc.egui_ctx);
         let registry = apps::load_registry(&exe_dir);
         let apps_dir = apps::find_apps_dir(&exe_dir);
-        let saves_dir = apps::find_saves_dir(&exe_dir);
+        let state = State::load();
+        let saves_dir = state
+            .custom_saves_dir
+            .as_deref()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| apps::find_saves_dir(&exe_dir));
+        let saves_dir_input = saves_dir.to_string_lossy().to_string();
         let custom_apps_dir = apps::find_custom_apps_dir(&exe_dir);
-        let entries = apps::scan(&registry, &apps_dir, &exe_dir);
+        let entries = apps::scan(&registry, &apps_dir, &exe_dir, &saves_dir);
         let icons = ICONS
             .iter()
             .filter_map(|(id, b)| load_texture(&cc.egui_ctx, id, b, None).map(|t| (id.to_string(), t)))
             .collect();
         let logo = load_texture(&cc.egui_ctx, "logo", include_bytes!("../assets/logo-white.png"), Some(480));
-        let state = State::load();
         apps::log(&format!(
             "launcher started; apps dir = {}; saves dir = {}; total apps = {}",
             apps_dir.display(),
@@ -113,6 +122,7 @@ impl Launcher {
             registry,
             apps_dir,
             saves_dir,
+            saves_dir_input,
             custom_apps_dir,
             entries,
             icons,
@@ -159,6 +169,98 @@ impl Launcher {
 
     fn toast(&mut self, msg: impl Into<String>, color: Color32) {
         self.toasts.push((msg.into(), color, Instant::now()));
+    }
+
+    fn set_saves_dir(&mut self, new_path: PathBuf) {
+        if let Err(e) = std::fs::create_dir_all(&new_path) {
+            let msg = if self.is_ko() {
+                format!("폴더를 생성하거나 접근할 수 없습니다: {e}")
+            } else {
+                format!("Failed to access or create directory: {e}")
+            };
+            self.toast(msg, ERR);
+            return;
+        }
+        self.saves_dir = new_path.clone();
+        self.saves_dir_input = new_path.to_string_lossy().to_string();
+        self.state.custom_saves_dir = Some(self.saves_dir_input.clone());
+        self.state.save();
+        self.saved_state = self.state.clone();
+
+        for e in &mut self.entries {
+            let app_save = self.saves_dir.join(e.meta.name());
+            let _ = std::fs::create_dir_all(&app_save);
+            e.save_dir = app_save;
+        }
+        let msg = if self.is_ko() {
+            format!("작업 파일 저장 위치를 변경했습니다: {}", self.saves_dir.display())
+        } else {
+            format!("Saved files folder updated: {}", self.saves_dir.display())
+        };
+        self.toast(msg, OK);
+    }
+
+    fn reset_saves_dir(&mut self) {
+        let def = apps::find_saves_dir(&self.exe_dir);
+        self.saves_dir = def.clone();
+        self.saves_dir_input = def.to_string_lossy().to_string();
+        self.state.custom_saves_dir = None;
+        self.state.save();
+        self.saved_state = self.state.clone();
+
+        for e in &mut self.entries {
+            let app_save = self.saves_dir.join(e.meta.name());
+            let _ = std::fs::create_dir_all(&app_save);
+            e.save_dir = app_save;
+        }
+        let msg = if self.is_ko() {
+            "작업 파일 저장 위치를 기본값으로 초기화했습니다."
+        } else {
+            "Reset saved files folder to default."
+        };
+        self.toast(msg, OK);
+    }
+
+    fn browse_saves_dir(&mut self) {
+        #[cfg(windows)]
+        {
+            let script = r#"[System.Reflection.Assembly]::LoadWithPartialName('System.Windows.Forms') | Out-Null; $f = New-Object System.Windows.Forms.FolderBrowserDialog; $f.Description = '작업 파일 저장 위치(SavedFiles) 선택'; $f.ShowNewFolderButton = $true; if ($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $f.SelectedPath }"#;
+            let output = std::process::Command::new("powershell")
+                .creation_flags(0x08000000)
+                .args(["-NoProfile", "-NonInteractive", "-Command", script])
+                .output();
+            if let Ok(out) = output {
+                let path_str = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                if !path_str.is_empty() {
+                    self.set_saves_dir(PathBuf::from(path_str));
+                }
+            }
+        }
+        #[cfg(target_os = "macos")]
+        {
+            let script = r#"POSIX path of (choose folder with prompt "작업 파일 저장 위치(SavedFiles) 선택")"#;
+            let output = std::process::Command::new("osascript")
+                .args(["-e", script])
+                .output();
+            if let Ok(out) = output {
+                let path_str = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                if !path_str.is_empty() {
+                    self.set_saves_dir(PathBuf::from(path_str));
+                }
+            }
+        }
+        #[cfg(all(not(windows), not(target_os = "macos")))]
+        {
+            if let Ok(out) = std::process::Command::new("zenity")
+                .args(["--file-selection", "--directory", "--title=Select SavedFiles Directory"])
+                .output()
+            {
+                let path_str = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                if !path_str.is_empty() {
+                    self.set_saves_dir(PathBuf::from(path_str));
+                }
+            }
+        }
     }
 
     fn refresh_status(&mut self) {
@@ -246,13 +348,19 @@ impl Launcher {
             Action::Open(i) => self.launch(ctx, i, None),
             Action::Folder(p) => {
                 let _ = std::fs::create_dir_all(&p);
-                if let Err(e) = std::process::Command::new("explorer").arg(&p).spawn() {
+                #[cfg(windows)]
+                let res = std::process::Command::new("explorer").arg(&p).spawn();
+                #[cfg(target_os = "macos")]
+                let res = std::process::Command::new("open").arg(&p).spawn();
+                #[cfg(all(not(windows), not(target_os = "macos")))]
+                let res = std::process::Command::new("xdg-open").arg(&p).spawn();
+                if let Err(e) = res {
                     self.toast(format!("Could not open folder: {e}"), ERR);
                 }
             }
             Action::Url(u) => ctx.open_url(egui::OpenUrl::new_tab(u)),
             Action::Rescan => {
-                self.entries = apps::scan(&self.registry, &self.apps_dir, &self.exe_dir);
+                self.entries = apps::scan(&self.registry, &self.apps_dir, &self.exe_dir, &self.saves_dir);
                 self.refresh_status();
                 let n = self.entries.len();
                 let msg = if self.is_ko() {
@@ -1015,9 +1123,9 @@ impl Launcher {
         let pct_int = (overall_pct * 100.0) as u32;
 
         let title = if ko {
-            "🔄 3M 소프트웨어 업데이트 & 파일 교체"
+            "🔄 소프트웨어 업데이트 & 파일 교체"
         } else {
-            "🔄 3M SOFTWARE UPDATE & REPLACEMENT"
+            "🔄 SOFTWARE UPDATE & REPLACEMENT"
         };
 
         let mut is_open = self.show_progress_modal;
@@ -1051,7 +1159,7 @@ impl Launcher {
 
                     ui.add_space(14.0_f32);
 
-                    // Large 3M-style Progress Bar
+                    // Large Progress Bar
                     let pb = egui::ProgressBar::new(overall_pct)
                         .show_percentage()
                         .fill(Color32::from_rgb(0xF5, 0xC0, 0x40))
@@ -1062,13 +1170,13 @@ impl Launcher {
                     ui.separator();
                     ui.add_space(10.0_f32);
 
-                    // 4-Step 3M Architecture Indicator
+                    // 4-Step Architecture Indicator
                     let steps = if ko {
                         [
                             ("1. 최신 릴리스 정보 대조 및 검증", overall_pct >= 0.15),
                             ("2. 고속 청크 패키지 다운로드", overall_pct >= 0.20),
                             ("3. 무결성 압축 해제 및 안전 임시 백업", overall_pct >= 0.80),
-                            ("4. 3M 동일 위치 안전 교체 (In-place Replace)", overall_pct >= 0.92),
+                            ("4. 동일 위치 안전 교체 (In-place Replace)", overall_pct >= 0.92),
                         ]
                     } else {
                         [
@@ -1099,7 +1207,7 @@ impl Launcher {
                         .inner_margin(Margin::symmetric(10, 8))
                         .show(ui, |ui| {
                             let note = if ko {
-                                "🔒 3M 안전 보장: 사용자 작업 폴더(SavedFiles)는 100% 안전하게 격리 보존됩니다."
+                                "🔒 안전 보장: 사용자 작업 폴더(SavedFiles)는 100% 안전하게 격리 보존됩니다."
                             } else {
                                 "🔒 SavedFiles directory is 100% preserved and untouched."
                             };
@@ -1117,7 +1225,7 @@ impl Launcher {
                             };
                             ui.label(RichText::new(comp_txt).size(15.0_f32).strong().color(OK));
                             let sub_txt = if ko {
-                                "3M 스타일 동일 위치 대체(In-place Replace) 방식으로 바이너리가 안전하게 갱신되었습니다."
+                                "동일 위치 안전 교체(In-place Replace) 방식으로 바이너리가 안전하게 갱신되었습니다."
                             } else {
                                 "App binaries updated to the latest release in-place."
                             };
@@ -1187,7 +1295,7 @@ impl Launcher {
             .show(ctx, |ui| {
                 ui.set_max_width(720.0_f32);
                 let desc = if ko {
-                    "3M 스타일 동일 위치 대체(In-place Replace) 방식으로 최신 버전으로 교체합니다. \
+                    "동일 위치 안전 교체(In-place Replace) 방식으로 최신 버전으로 교체합니다. \
                      사용자가 작업한 파일(SavedFiles)과 개인 설정은 100% 안전하게 유지됩니다."
                 } else {
                     "In-place replacements update apps safely to latest releases. \
@@ -1361,49 +1469,185 @@ impl Launcher {
             .anchor(Align2::RIGHT_TOP, vec2(-12.0_f32, 54.0_f32))
             .frame(Frame::window(&ctx.style()).inner_margin(Margin::same(16)))
             .show(ctx, |ui| {
-                ui.set_width(340.0_f32);
+                ui.set_width(400.0_f32);
 
-                // Language selection in settings
-                ui.label(RichText::new(if ko { "언어 설정 (Language)" } else { "LANGUAGE" }).font(mono(10.0_f32)).color(DIM));
+                // --- 1. Language & Behavior ---
                 ui.horizontal(|ui| {
-                    if ui.selectable_value(&mut self.state.language, "ko".to_string(), "한국어 (Korean)").clicked() {
+                    ui.label(RichText::new(if ko { "언어" } else { "Language" }).font(mono(10.5_f32)).color(MUTED));
+                    ui.add_space(8.0_f32);
+                    if ui.selectable_value(&mut self.state.language, "ko".to_string(), "한국어").clicked() {
                         self.toast("언어를 한국어로 변경했습니다.", OK);
                     }
                     if ui.selectable_value(&mut self.state.language, "en".to_string(), "English").clicked() {
                         self.toast("Language switched to English.", OK);
                     }
                 });
-                ui.add_space(10.0_f32);
-
-                // Minimize option
+                ui.add_space(6.0_f32);
                 let min_txt = if ko { "프로그램 실행 시 런처 최소화" } else { "Minimize launcher after opening an app" };
                 ui.checkbox(&mut self.state.minimize_on_open, min_txt);
-                ui.add_space(12.0_f32);
+                ui.add_space(8.0_f32);
+                ui.separator();
+                ui.add_space(8.0_f32);
 
-                // Saved Files Folder Section
+                // --- 2. Saved Files Folder Section ---
                 let saves_hdr = if ko { "📁 작업 파일 저장 위치 (SavedFiles)" } else { "📁 SAVED FILES FOLDER" };
-                ui.label(RichText::new(saves_hdr).font(mono(10.0_f32)).color(OK));
-                ui.label(RichText::new(self.saves_dir.display().to_string()).font(mono(10.5_f32)).color(INK));
+                ui.label(RichText::new(saves_hdr).font(mono(10.5_f32)).color(OK));
+                ui.add_space(3.0_f32);
+
                 ui.horizontal(|ui| {
-                    let open_s_txt = if ko { "저장 폴더 열기" } else { "Open Saves Folder" };
+                    ui.add(
+                        TextEdit::singleline(&mut self.saves_dir_input)
+                            .desired_width(ui.available_width() - 75.0_f32)
+                            .font(mono(10.0_f32)),
+                    );
+                    let apply_txt = if ko { "적용" } else { "Apply" };
+                    if ui.button(apply_txt).clicked() {
+                        let p = PathBuf::from(self.saves_dir_input.trim());
+                        if !p.as_os_str().is_empty() {
+                            self.set_saves_dir(p);
+                        }
+                    }
+                });
+                ui.add_space(3.0_f32);
+                ui.horizontal(|ui| {
+                    let browse_txt = if ko { "📂 찾아보기" } else { "Browse..." };
+                    if ui.button(browse_txt).clicked() {
+                        self.browse_saves_dir();
+                    }
+                    let open_s_txt = if ko { "📁 폴더 열기" } else { "Open Folder" };
                     if ui.button(open_s_txt).clicked() {
                         actions.push(Action::Folder(self.saves_dir.clone()));
                     }
+                    let reset_txt = if ko { "↺ 초기화" } else { "Reset" };
+                    if ui.button(reset_txt).on_hover_text(if ko { "기본 SavedFiles 위치로 복원" } else { "Reset to default folder" }).clicked() {
+                        self.reset_saves_dir();
+                    }
                 });
-                ui.add_space(10.0_f32);
+                ui.add_space(8.0_f32);
+                ui.separator();
+                ui.add_space(8.0_f32);
 
-                // Custom apps folder section
-                let custom_hdr = if ko { "🛠️ 내가 수정한 커스텀 앱 위치 (custom_apps)" } else { "🛠️ CUSTOM MOD APPS FOLDER" };
-                ui.label(RichText::new(custom_hdr).font(mono(10.0_f32)).color(DIM));
-                ui.label(RichText::new(self.custom_apps_dir.display().to_string()).font(mono(10.5_f32)).color(MUTED));
+                // --- 3. Custom Apps Folder Section ---
+                let custom_hdr = if ko { "🛠️ 커스텀 앱 위치 (custom_apps)" } else { "🛠️ CUSTOM MOD APPS FOLDER" };
+                ui.label(RichText::new(custom_hdr).font(mono(10.5_f32)).color(Color32::from_rgb(0x7C, 0xA8, 0xFF)));
+                ui.label(RichText::new(self.custom_apps_dir.display().to_string()).font(mono(10.0_f32)).color(MUTED));
+                ui.add_space(3.0_f32);
                 ui.horizontal(|ui| {
-                    let open_c_txt = if ko { "커스텀 폴더 열기" } else { "Open Folder" };
+                    let open_c_txt = if ko { "📁 커스텀 폴더 열기" } else { "Open Folder" };
                     if ui.button(open_c_txt).clicked() {
                         actions.push(Action::Folder(self.custom_apps_dir.clone()));
                     }
-                    let rescan_txt = if ko { "다시 스캔" } else { "Rescan" };
+                    let rescan_txt = if ko { "🔄 다시 스캔" } else { "Rescan" };
                     if ui.button(rescan_txt).clicked() {
                         actions.push(Action::Rescan);
+                    }
+                });
+                ui.add_space(2.0_f32);
+                let tip = if ko {
+                    "💡 한글 패치/개조 .exe 보관용 (공식 앱보다 우선 실행)"
+                } else {
+                    "💡 Priority 1 folder for modded/translated apps"
+                };
+                ui.label(RichText::new(tip).size(10.5_f32).color(DIM));
+
+                ui.add_space(8.0_f32);
+                ui.separator();
+                ui.add_space(8.0_f32);
+
+                // --- 4. AI (MCP) Connection Section ---
+                let ai_hdr = if ko { "🤖 AI 연동 (Claude / Codex / Grok / Cursor / Gemini)" } else { "🤖 AI CONNECTION (MCP)" };
+                ui.label(RichText::new(ai_hdr).font(mono(10.5_f32)).color(Color32::from_rgb(0x4C, 0xCE, 0xAC)));
+                ui.add_space(2.0_f32);
+                let ai_sub = if ko {
+                    "평소 쓰는 AI 앱(Claude, Codex, Grok, Cursor 등)에서 Craft 앱들을 직접 다룰 수 있도록 연결합니다."
+                } else {
+                    "Connect Craft apps to your AI desktop clients (Claude, Codex, Grok, Cursor, etc.)."
+                };
+                ui.label(RichText::new(ai_sub).size(10.0_f32).color(DIM));
+                ui.add_space(5.0_f32);
+
+                for &client in &crate::ai_connect::Client::ALL {
+                    ui.horizontal(|ui| {
+                        let is_installed = client.is_present();
+                        let count = crate::ai_connect::status(client).unwrap_or(0);
+
+                        let badge = if count > 0 {
+                            RichText::new(format!("● {count}개 연결됨")).font(mono(9.5_f32)).color(OK)
+                        } else if is_installed {
+                            RichText::new("○ 대기 중").font(mono(9.5_f32)).color(MUTED)
+                        } else {
+                            RichText::new("미설치").font(mono(9.5_f32)).color(DIM)
+                        };
+
+                        ui.label(RichText::new(client.label()).font(mono(10.0_f32)).color(INK));
+                        ui.label(badge);
+
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            if count > 0 {
+                                let disc_txt = if ko { "연결 해제" } else { "Disconnect" };
+                                if ui.small_button(disc_txt).clicked() {
+                                    match crate::ai_connect::disconnect(client) {
+                                        Ok(n) => self.toast(format!("{}에서 {n}개 도구 연결을 해제했습니다.", client.label()), MUTED),
+                                        Err(e) => self.toast(format!("해제 실패: {e}"), ERR),
+                                    }
+                                }
+                            } else {
+                                let conn_txt = if ko { "연결하기" } else { "Connect" };
+                                if ui.small_button(conn_txt).clicked() {
+                                    match crate::ai_connect::connect(client, &self.entries) {
+                                        Ok(n) => self.toast(format!("{}에 {n}개 앱 도구 등록 완료! 앱을 재시작하면 인식됩니다.", client.label()), OK),
+                                        Err(e) => self.toast(format!("연결 실패: {e}"), ERR),
+                                    }
+                                }
+                            }
+                        });
+                    });
+                    ui.add_space(2.0_f32);
+                }
+
+                ui.add_space(4.0_f32);
+                ui.horizontal(|ui| {
+                    let copy_btn_txt = if ko { "📋 MCP JSON 복사 (기타 AI용)" } else { "📋 Copy MCP JSON" };
+                    if ui.button(copy_btn_txt).on_hover_text(
+                        if ko { "Windsurf, Cline 등 기타 AI 클라이언트 설정에 붙여넣을 수 있는 JSON을 복사합니다." }
+                        else { "Copy MCP JSON config for Windsurf, Cline or other AI clients." }
+                    ).clicked() {
+                        let json = crate::ai_connect::mcp_json_string(&self.entries);
+                        ctx.copy_text(json);
+                        let msg = if ko {
+                            "클립보드에 MCP 설정 JSON이 복사되었습니다!"
+                        } else {
+                            "MCP JSON copied to clipboard!"
+                        };
+                        self.toast(msg, OK);
+                    }
+                });
+
+                ui.add_space(8.0_f32);
+                ui.separator();
+                ui.add_space(8.0_f32);
+
+                // --- 4. Update Data Source Section ---
+                let upd_hdr = if ko { "🌐 업데이트 소스 (GitHub)" } else { "🌐 UPDATE SOURCE (GITHUB)" };
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(upd_hdr).font(mono(10.5_f32)).color(Color32::from_rgb(0xF5, 0xC0, 0x40)));
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        ui.label(RichText::new("gochujangs33-dot/Craft-Studio").font(mono(9.5_f32)).color(DIM));
+                    });
+                });
+                ui.add_space(4.0_f32);
+                ui.horizontal(|ui| {
+                    let repo_btn = if ko { "🌐 저장소 열기" } else { "GitHub Repo" };
+                    if ui.button(repo_btn).clicked() {
+                        actions.push(Action::Url("https://github.com/gochujangs33-dot/Craft-Studio".to_string()));
+                    }
+                    let manifest_btn = if ko { "📄 version.json" } else { "version.json" };
+                    if ui.button(manifest_btn).clicked() {
+                        actions.push(Action::Url("https://raw.githubusercontent.com/gochujangs33-dot/Craft-Studio/main/version.json".to_string()));
+                    }
+                    let check_btn = if ko { "🔄 업데이트 확인" } else { "Check Updates" };
+                    if ui.button(check_btn).clicked() {
+                        actions.push(Action::CheckUpdates);
                     }
                 });
             });
@@ -1482,8 +1726,13 @@ impl eframe::App for Launcher {
                 let color = if success { OK } else { ERR };
                 self.toast(msg, color);
                 if success {
-                    self.entries = apps::scan(&self.registry, &self.apps_dir, &self.exe_dir);
+                    self.entries = apps::scan(&self.registry, &self.apps_dir, &self.exe_dir, &self.saves_dir);
                     self.refresh_status();
+                    if let Some(e) = self.entries.iter().find(|e| e.meta.id == app_id) {
+                        if let Some(v) = &e.version {
+                            self.updater.mark_updated(&app_id, v);
+                        }
+                    }
                 }
             }
         }
