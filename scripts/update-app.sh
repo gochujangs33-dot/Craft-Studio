@@ -99,6 +99,18 @@ fi
 
 mkdir -p "$DEST_DIR"
 cp -R "$SOURCE_DIR"/* "$DEST_DIR"/
+
+# Strip Intel (x86_64) code to keep Apple Silicon (arm64) only
+if command -v lipo >/dev/null 2>&1; then
+    find "$DEST_DIR" -type f | while read -r f; do
+        if file "$f" 2>/dev/null | grep -q "Mach-O universal binary"; then
+            if lipo -info "$f" 2>/dev/null | grep -q "arm64"; then
+                lipo -thin arm64 "$f" -output "${f}.arm64" 2>/dev/null && mv -f "${f}.arm64" "$f"
+            fi
+        fi
+    done
+fi
+
 # Remove quarantine attributes and grant execute permissions
 xattr -cr "$DEST_DIR" 2>/dev/null || true
 chmod -R +x "$DEST_DIR" 2>/dev/null || true

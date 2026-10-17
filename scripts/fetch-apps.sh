@@ -115,6 +115,17 @@ for id in $APP_IDS; do
         esac
     fi
 
+    # Strip Intel (x86_64) code to keep Apple Silicon (arm64) only
+    if command -v lipo >/dev/null 2>&1; then
+        find "${DEST}" -type f | while read -r f; do
+            if file "$f" 2>/dev/null | grep -q "Mach-O universal binary"; then
+                if lipo -info "$f" 2>/dev/null | grep -q "arm64"; then
+                    lipo -thin arm64 "$f" -output "${f}.arm64" 2>/dev/null && mv -f "${f}.arm64" "$f"
+                fi
+            fi
+        done
+    fi
+
     # Clear quarantine attributes and make binaries executable
     xattr -cr "${DEST}" 2>/dev/null || true
     find "${DEST}" -maxdepth 3 -type f -perm -111 -exec chmod +x {} + 2>/dev/null || true
@@ -122,7 +133,7 @@ for id in $APP_IDS; do
 
     # Record version
     echo "${TAG_NAME#v}" > "${DEST}/.version"
-    echo "    [ ok ] ${id} ${TAG_NAME} installed to ${DEST}"
+    echo "    [ ok ] ${id} ${TAG_NAME} (arm64) installed to ${DEST}"
 done
 
 echo "==> macOS apps fetch completed."
