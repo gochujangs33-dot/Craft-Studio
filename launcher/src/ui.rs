@@ -1819,6 +1819,11 @@ impl eframe::App for Launcher {
         // Poll background updater events
         for (app_id, success, msg) in self.updater.poll_events() {
             if app_id == "__check_all__" {
+                // Dynamically reload synced registry so new cards added on GitHub appear immediately!
+                self.registry = apps::load_registry(&self.exe_dir);
+                self.entries = apps::scan(&self.registry, &self.apps_dir, &self.exe_dir, &self.saves_dir);
+                self.refresh_status();
+
                 let count = self.available_update_count();
                 if count > 0 {
                     let alert = if self.is_ko() {

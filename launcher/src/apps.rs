@@ -76,14 +76,38 @@ impl AppMeta {
     }
 }
 
-/// A `registry.json` next to the executable overrides the embedded copy.
+/// Returns the user-writable path for cached/synced dynamic registry.json
+pub fn get_user_registry_path(exe_dir: &Path) -> PathBuf {
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(home) = std::env::var_os("HOME") {
+            let p = PathBuf::from(home).join("Library/Application Support/ArtCraftStudio");
+            let _ = std::fs::create_dir_all(&p);
+            return p.join("registry.json");
+        }
+    }
+    let saves = exe_dir.join("SavedFiles");
+    let _ = std::fs::create_dir_all(&saves);
+    saves.join("registry.json")
+}
+
+/// Loads app registry. Dynamic synchronized registry overrides embedded copy.
 pub fn load_registry(exe_dir: &Path) -> Registry {
+    // 1. Check user application support directory (synced from online)
+    let user_reg = get_user_registry_path(exe_dir);
+    if let Ok(s) = std::fs::read_to_string(&user_reg) {
+        if let Ok(r) = serde_json::from_str::<Registry>(&s) {
+            return r;
+        }
+    }
+    // 2. Check next to executable
     if let Ok(s) = std::fs::read_to_string(exe_dir.join("registry.json")) {
         match serde_json::from_str(&s) {
             Ok(r) => return r,
             Err(e) => log(&format!("registry.json next to exe is invalid, using embedded copy: {e}")),
         }
     }
+    // 3. Fallback to embedded copy
     serde_json::from_str(include_str!("../../registry.json")).expect("embedded registry.json is valid")
 }
 

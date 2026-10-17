@@ -171,14 +171,17 @@ impl UpdateManager {
         self.is_checking = true;
         let latest_store = Arc::clone(&self.latest_versions);
         let tx = self.sender.clone();
+        let exe_dir = self._exe_dir.clone();
 
         thread::spawn(move || {
             let mut found = 0;
             let suite_repo = "gochujangs33-dot/Craft-Studio";
+            let user_reg = crate::apps::get_user_registry_path(&exe_dir);
+            let user_reg_str = user_reg.display().to_string();
 
             #[cfg(windows)]
             {
-                // Multi-tier fast version matching (version.json + releases + upstream) with TLS & proxy bypass
+                // Multi-tier fast version matching (registry.json + version.json + releases + upstream) with TLS & proxy bypass
                 let ps_script = format!(
                 "$ProgressPreference = 'SilentlyContinue'; \
                  [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12; \
@@ -199,6 +202,12 @@ impl UpdateManager {
                      }} catch {{}} \
                      finally {{ if (Test-Path $tmp) {{ Remove-Item $tmp -Force -ErrorAction SilentlyContinue }} }} \
                      try {{ return (Invoke-RestMethod $url -Headers @{{ 'User-Agent' = 'ArtCraftStudio' }} -TimeoutSec 6) }} catch {{ return $null }} \
+                 }} \
+                 \
+                 # Tier 0: Sync remote registry.json so new cards appear automatically \
+                 $rjson = Fetch-Json 'https://raw.githubusercontent.com/{suite_repo}/main/registry.json'; \
+                 if ($rjson -and $rjson.apps) {{ \
+                     Set-Content -Path '{user_reg_str}' -Value (ConvertTo-Json $rjson -Depth 10) -Encoding UTF8 -ErrorAction SilentlyContinue; \
                  }} \
                  \
                  # Tier 1: Check remote version.json manifest \
@@ -253,7 +262,8 @@ impl UpdateManager {
             #[cfg(not(windows))]
             {
                 let sh_script = format!(
-                    "curl -sL --max-time 10 https://raw.githubusercontent.com/{suite_repo}/main/version.json 2>/dev/null || true"
+                    "curl -sL --max-time 8 https://raw.githubusercontent.com/{suite_repo}/main/registry.json -o '{user_reg_str}' 2>/dev/null || true; \
+                     curl -sL --max-time 8 https://raw.githubusercontent.com/{suite_repo}/main/version.json 2>/dev/null || true"
                 );
                 let output = silent_command("sh")
                     .args(["-c", &sh_script])
