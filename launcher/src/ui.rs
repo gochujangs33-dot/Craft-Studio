@@ -342,7 +342,17 @@ impl Launcher {
     fn open_file(&mut self, ctx: &egui::Context, path: &Path) {
         let ext = path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
         match self.entries.iter().position(|e| e.meta.extensions.iter().any(|x| *x == ext)) {
-            Some(idx) => self.launch(ctx, idx, Some(path)),
+            Some(idx) => {
+                if ext == "indd" || ext == "indt" {
+                    let tip = if self.is_ko() {
+                        "💡 인디자인 파일은 어도비 인디자인에서 '내보내기(Export) ▸ IDML(*.idml)'로 저장된 파일이 가장 정확하게 호환됩니다."
+                    } else {
+                        "💡 InDesign files open best when exported as InDesign Markup (.idml)."
+                    };
+                    self.toast(tip, MUTED);
+                }
+                self.launch(ctx, idx, Some(path));
+            }
             None => {
                 let msg = if self.is_ko() {
                     format!(".{ext} 확장자를 열 수 있는 Craft 앱이 없습니다.")

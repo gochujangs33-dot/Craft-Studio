@@ -112,14 +112,14 @@
       "order": 7,
       "tagline": "Page layout and publishing",
       "tagline_ko": "다단 페이지 레이아웃, 조판 및 전자 출판",
-      "desc_ko": "Adobe InDesign 대체 프로그램입니다.\n• 책, 잡지, 브로슈어, 카탈로그 등 다단 페이지 조판/편집\n• 정밀한 타이포그래피 그리드, 마스터 페이지, 단락 스타일\n• 인쇄용 CMYK 고해상도 PDF 및 출판용 파일 내보내기",
-      "desc_en": "Open-source replacement for Adobe InDesign®.\n• Professional multi-page layout design and typesetting\n• Master pages, paragraph styles, baseline grids & text wraps\n• Print-ready preflight and high-res PDF publishing",
+      "desc_ko": "Adobe InDesign 대체 프로그램입니다.\n• 책, 잡지, 브로슈어, 카탈로그 등 다단 페이지 조판/편집\n• 어도비 인디자인 표준 교환 형식(IDML) 및 INDD/INDT 가져오기 지원\n• 정밀한 타이포그래피 그리드, 마스터 페이지, 단락 스타일\n• 인쇄용 CMYK 고해상도 PDF 및 출판용 파일 내보내기",
+      "desc_en": "Open-source replacement for Adobe InDesign®.\n• Professional multi-page layout design and typesetting\n• IDML (InDesign Markup) & INDD/INDT import compatibility\n• Master pages, paragraph styles, baseline grids & text wraps\n• Print-ready preflight and high-res PDF publishing",
       "like": "Like Adobe InDesign®",
       "like_ko": "Adobe InDesign 대체",
       "accent": "#9BD13A",
       "repo": "https://github.com/storytold/designcraft",
       "website": "https://getartcraft.com/apps/designcraft",
-      "extensions": ["indd", "idml"],
+      "extensions": ["idml", "indd", "indt", "designcraft"],
       "mcp_args": ["mcp"]
     },
     {
