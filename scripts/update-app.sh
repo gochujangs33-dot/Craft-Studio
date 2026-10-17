@@ -32,8 +32,38 @@ mkdir -p "$TMP_DIR"
 DOWNLOAD_URL=""
 LATEST_TAG="latest"
 
-# 1. Check user suite repo releases first
-if [ -n "$SUITE_REPO" ]; then
+# Tier 0: Direct manifest version.json lookup from raw.githubusercontent.com (Immune to API rate limits!)
+VJSON=$(curl -k -L -s --max-time 10 -A "ArtCraftStudio-Updater" "https://raw.githubusercontent.com/${SUITE_REPO}/main/version.json" 2>/dev/null || true)
+if [ -n "$VJSON" ]; then
+    APP_VER=$(echo "$VJSON" | grep -A 5 "\"${APP_ID}\":" | grep -o '"version": *"[^"]*"' | head -n 1 | sed -E 's/.*"([^"]+)".*/\1/' || true)
+    if [ -n "$APP_VER" ]; then
+        LATEST_TAG="$APP_VER"
+        REPO_PATH=$(echo "$REPO_URL" | sed 's|^https://github.com/||')
+        
+        M_ARCH=$(uname -m 2>/dev/null || echo "arm64")
+        CANDIDATES=(
+            "https://github.com/${REPO_PATH}/releases/download/v${APP_VER}/${APP_ID}-${APP_VER}-macos-universal.dmg"
+            "https://github.com/${REPO_PATH}/releases/download/v${APP_VER}/${APP_ID}-${APP_VER}-macos-${M_ARCH}.dmg"
+            "https://github.com/${REPO_PATH}/releases/download/v${APP_VER}/${APP_ID}-macos-universal.dmg"
+            "https://github.com/${REPO_PATH}/releases/download/v${APP_VER}/${APP_ID}-macos-${M_ARCH}.dmg"
+            "https://github.com/${REPO_PATH}/releases/download/v${APP_VER}/HOP-macos-${M_ARCH}.dmg"
+            "https://github.com/${REPO_PATH}/releases/download/v${APP_VER}/HOP-macos-arm64.dmg"
+            "https://github.com/${REPO_PATH}/releases/latest/download/${APP_ID}-macos-universal.dmg"
+            "https://github.com/${REPO_PATH}/releases/latest/download/HOP-macos-arm64.dmg"
+        )
+        for cand in "${CANDIDATES[@]}"; do
+            HTTP_CODE=$(curl -k -s -o /dev/null -w "%{http_code}" -L --max-time 6 "$cand" 2>/dev/null || true)
+            if [ "$HTTP_CODE" = "200" ]; then
+                DOWNLOAD_URL="$cand"
+                echo "PROGRESS:15:매니페스트 기반 직접 다운로드 채널 연결: v${LATEST_TAG}"
+                break
+            fi
+        done
+    fi
+fi
+
+# 1. Check user suite repo releases
+if [ -z "$DOWNLOAD_URL" ] && [ -n "$SUITE_REPO" ]; then
     SUITE_JSON=$(curl -k -L -s --max-time 15 -A "ArtCraftStudio-Updater" "https://api.github.com/repos/${SUITE_REPO}/releases/latest" 2>/dev/null || true)
     APP_PKG=$(echo "$SUITE_JSON" | grep -o '"browser_download_url": *"[^"]*"' | sed -E 's/.*"([^"]+)".*/\1/' | grep -iE "${APP_ID}.*(macos|darwin).*\.dmg" | head -n 1 || true)
     if [ -z "$APP_PKG" ]; then

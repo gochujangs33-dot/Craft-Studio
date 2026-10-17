@@ -59,19 +59,50 @@ if (-not (Test-Path $DestDir)) {
 }
 
 $asset = $null
+$downloadUrl = ""
 $latestTag = "latest"
+$zipName = ""
+$expectedBytes = 0
 
-# 1. First check user's suite repo (https://github.com/gochujangs33-dot/Craft-Studio/releases)
-if ($SuiteRepo) {
+$repoPath = ($RepoUrl -replace '^https://github.com/', '')
+
+# Tier 0: Direct version.json manifest lookup from raw.githubusercontent.com (No API rate limits!)
+$vjson = Get-RemoteJson "https://raw.githubusercontent.com/$SuiteRepo/main/version.json"
+if ($vjson -and $vjson.apps -and $vjson.apps.$AppId) {
+    $vinfo = $vjson.apps.$AppId
+    $tagCandidate = $vinfo.version
+    $assetCandidate = $vinfo.asset
+    
+    $candUrls = @(
+        "https://github.com/$repoPath/releases/download/v$tagCandidate/$assetCandidate",
+        "https://github.com/$repoPath/releases/download/$tagCandidate/$assetCandidate",
+        "https://github.com/$repoPath/releases/latest/download/$assetCandidate"
+    )
+    foreach ($u in $candUrls) {
+        $code = & curl.exe -s -o NUL -w "%{http_code}" -L --max-time 6 "$u"
+        if ($code -eq "200") {
+            $downloadUrl = $u
+            $latestTag = $tagCandidate
+            $zipName = $assetCandidate
+            Write-Output "PROGRESS:15:매니페스트 기반 직접 다운로드 채널 연결: $zipName (v$latestTag)"
+            break
+        }
+    }
+}
+
+# Tier 1: Suite repository releases (if available)
+if (-not $downloadUrl -and $SuiteRepo) {
     $suiteRel = Get-RemoteJson "https://api.github.com/repos/$SuiteRepo/releases/latest"
     if ($suiteRel -and $suiteRel.assets) {
         $suiteAsset = $suiteRel.assets | Where-Object { 
-            $_.name -like "$AppId-*.zip" -or $_.name -like "$AppId.zip" -or $_.name -like "$AppId-windows*.zip"
+            $_.name -like "$AppId-*.zip" -or $_.name -like "$AppId.zip" -or $_.name -like "$AppId-windows*.zip" -or $_.name -like "$AppId*.exe"
         } | Select-Object -First 1
 
         if ($suiteAsset) {
             Write-Output "PROGRESS:15:릴리스 패키지 발견: $($suiteAsset.name)"
-            $asset = $suiteAsset
+            $downloadUrl = $suiteAsset.browser_download_url
+            $zipName = $suiteAsset.name
+            $expectedBytes = if ($suiteAsset.size) { [int64]$suiteAsset.size } else { 0 }
             if ($suiteAsset.name -match "$AppId-([0-9\.]+)") {
                 $latestTag = $matches[1]
             } else {
@@ -81,9 +112,8 @@ if ($SuiteRepo) {
     }
 }
 
-# 2. Fallback to upstream official repo (storytold/<id>)
-if (-not $asset) {
-    $repoPath = ($RepoUrl -replace '^https://github.com/', '')
+# Tier 2: Upstream official repo (storytold/<id>)
+if (-not $downloadUrl) {
     $rel = Get-RemoteJson "https://api.github.com/repos/$repoPath/releases/latest"
     if ($rel -and $rel.assets) {
         $latestTag = ($rel.tag_name -replace '^v', '')
@@ -96,12 +126,36 @@ if (-not $asset) {
         }
         if ($asset) {
             Write-Output "PROGRESS:15:공식 릴리스 패키지 발견: $($asset.name)"
+            $downloadUrl = $asset.browser_download_url
+            $zipName = $asset.name
+            $expectedBytes = if ($asset.size) { [int64]$asset.size } else { 0 }
         }
     }
 }
 
-if (-not $asset) {
-    Write-Error "GitHub에서 $AppId 릴리스 패키지 정보를 찾을 수 없습니다."
+# Tier 3: Direct standard asset probe fallbacks (bypasses rate limit if API returned 403)
+if (-not $downloadUrl) {
+    $fallbackAssets = @(
+        "$AppId-windows-$Arch-portable.zip",
+        "$AppId-windows-x64-portable.zip",
+        "$AppId-windows.zip",
+        "$AppId-windows-x64.exe",
+        "HOP-windows-x64.exe"
+    )
+    foreach ($fa in $fallbackAssets) {
+        $testUrl = "https://github.com/$repoPath/releases/latest/download/$fa"
+        $code = & curl.exe -s -o NUL -w "%{http_code}" -L --max-time 6 "$testUrl"
+        if ($code -eq "200") {
+            $downloadUrl = $testUrl
+            $zipName = $fa
+            Write-Output "PROGRESS:15:직접 자산 프로브 연결 성공: $zipName"
+            break
+        }
+    }
+}
+
+if (-not $downloadUrl) {
+    Write-Error "GitHub에서 $AppId 릴리스 패키지 다운로드 URL을 찾을 수 없습니다."
     exit 2
 }
 
@@ -109,7 +163,9 @@ $tempDir = Join-Path $env:TEMP "ArtCraft_Update_$AppId"
 if (Test-Path $tempDir) { Remove-Item $tempDir -Recurse -Force -ErrorAction SilentlyContinue }
 New-Item -ItemType Directory -Force $tempDir | Out-Null
 
-$zipName = if ($asset) { $asset.name } else { "$AppId-$latestTag-windows-x64-portable.zip" }
+if (-not $zipName) {
+    $zipName = "$AppId-$latestTag-windows-x64-portable.zip"
+}
 $zipPath = Join-Path $tempDir $zipName
 
 # Check local staged release assets first for instant testing
@@ -130,8 +186,6 @@ if ($foundLocal) {
     Write-Output "PROGRESS:75:다운로드 완료"
 } else {
     Write-Output "PROGRESS:20:다운로드 서버 연결 중..."
-    $downloadUrl = $asset.browser_download_url
-    $expectedBytes = if ($asset.size) { [int64]$asset.size } else { 0 }
     $downloadOk = $false
 
     # Method 1: curl.exe in background with live progress tracking
