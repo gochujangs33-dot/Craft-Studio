@@ -103,6 +103,15 @@ fi
 if [ -f "${ROOT_DIR}/version.json" ]; then
     cp -f "${ROOT_DIR}/version.json" "${RESOURCES_DIR}/"
 fi
+
+# Copy macOS application icon
+if [ -f "${ROOT_DIR}/launcher/assets/AppIcon.icns" ]; then
+    cp -f "${ROOT_DIR}/launcher/assets/AppIcon.icns" "${RESOURCES_DIR}/AppIcon.icns"
+    echo "==> Copied AppIcon.icns into ${RESOURCES_DIR}"
+fi
+if [ -f "${ROOT_DIR}/launcher/assets/AppIcon.png" ]; then
+    cp -f "${ROOT_DIR}/launcher/assets/AppIcon.png" "${RESOURCES_DIR}/AppIcon.png"
+fi
 if [ -d "${DIST_DIR}/apps" ]; then
     mkdir -p "${RESOURCES_DIR}/apps"
     cp -R "${DIST_DIR}/apps"/* "${RESOURCES_DIR}/apps/" 2>/dev/null || true
@@ -143,6 +152,9 @@ if command -v hdiutil >/dev/null 2>&1; then
     mkdir -p "${DMG_TMP}"
     cp -R "${APP_BUNDLE}" "${DMG_TMP}/"
     ln -s /Applications "${DMG_TMP}/Applications"
+    if [ -f "${RESOURCES_DIR}/AppIcon.icns" ]; then
+        cp -f "${RESOURCES_DIR}/AppIcon.icns" "${DMG_TMP}/.VolumeIcon.icns" 2>/dev/null || true
+    fi
     hdiutil create -volname "ArtCraft Studio" -srcfolder "${DMG_TMP}" -ov -format UDZO "${RELEASE_DIR}/ArtCraftStudio-macos.dmg"
     rm -rf "${DMG_TMP}"
     echo "==> Created ${RELEASE_DIR}/ArtCraftStudio-macos.dmg"
