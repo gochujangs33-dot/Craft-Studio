@@ -355,6 +355,8 @@ pub fn scan(reg: &Registry, apps_dir: &Path, exe_dir: &Path, saves_base: &Path) 
 }
 
 fn detect_exe(dir: &Path, id: &str, hint: Option<&str>) -> Option<PathBuf> {
+    const SKIP: [&str; 8] = ["cli", "uninst", "crash", "helper", "update", "server", "setup", "install"];
+
     // If the path itself is already an executable or .app bundle
     if dir.is_dir() && dir.extension().is_some_and(|e| e.eq_ignore_ascii_case("app")) {
         return Some(dir.to_path_buf());
@@ -369,32 +371,45 @@ fn detect_exe(dir: &Path, id: &str, hint: Option<&str>) -> Option<PathBuf> {
     collect_exes(dir, 0, &mut cands);
     let want_exe = format!("{id}.exe");
     let want_app = format!("{id}.app");
-    if let Some(p) = cands
-        .iter()
-        .find(|p| {
-            p.file_name().is_some_and(|n| {
-                let s = n.to_string_lossy();
-                s.eq_ignore_ascii_case(&want_exe)
-                    || s.eq_ignore_ascii_case(&want_app)
-                    || s.eq_ignore_ascii_case(id)
-                    || s.to_lowercase().starts_with(&id.to_lowercase())
-            })
+
+    // 1. Exact name match (highest priority: wordcraft.exe, wordcraft.app, wordcraft)
+    if let Some(p) = cands.iter().find(|p| {
+        p.file_name().is_some_and(|n| {
+            let s = n.to_string_lossy();
+            s.eq_ignore_ascii_case(&want_exe)
+                || s.eq_ignore_ascii_case(&want_app)
+                || s.eq_ignore_ascii_case(id)
         })
-    {
+    }) {
         return Some(p.clone());
     }
-    #[cfg(target_os = "macos")]
-    if let Some(app) = cands.iter().find(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("app"))) {
-        return Some(app.clone());
-    }
-    const SKIP: [&str; 8] = ["cli", "uninst", "crash", "helper", "update", "server", "setup", "install"];
-    cands
+
+    // Filter out helper/cli/uninstaller binaries
+    let filtered: Vec<_> = cands
         .into_iter()
         .filter(|p| {
             let n = p.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
             !SKIP.iter().any(|s| n.contains(s))
         })
-        .min_by_key(|p| p.components().count())
+        .collect();
+
+    // 2. Exact startswith on filtered non-cli binaries
+    if let Some(p) = filtered.iter().find(|p| {
+        p.file_name().is_some_and(|n| {
+            n.to_string_lossy().to_lowercase().starts_with(&id.to_lowercase())
+        })
+    }) {
+        return Some(p.clone());
+    }
+
+    // 3. On macOS, any .app bundle that wasn't skipped
+    #[cfg(target_os = "macos")]
+    if let Some(app) = filtered.iter().find(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("app"))) {
+        return Some(app.clone());
+    }
+
+    // 4. Fallback to shallowest non-skipped executable
+    filtered.into_iter().min_by_key(|p| p.components().count())
 }
 
 fn collect_exes(dir: &Path, depth: u32, out: &mut Vec<PathBuf>) {
@@ -449,6 +464,31 @@ fn dir_size(dir: &Path) -> u64 {
 
 // ---------------------------------------------------------------- processes
 
+pub const COMMON_CONTROL_TOKEN: &str =
+    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+/// Returns the assigned control port for Craft applications.
+/// PhotoCraft is 49152, VectorCraft is 49153, FilmCraft is 49154, ... HopCraft is 49165.
+pub fn get_app_control_port(id: &str) -> Option<u16> {
+    match id.to_ascii_lowercase().as_str() {
+        "photocraft" => Some(49152),
+        "vectorcraft" => Some(49153),
+        "filmcraft" => Some(49154),
+        "lightcraft" => Some(49155),
+        "pdfcraft" => Some(49156),
+        "effectcraft" => Some(49157),
+        "designcraft" => Some(49158),
+        "wordcraft" => Some(49159),
+        "deckcraft" => Some(49160),
+        "gridcraft" => Some(49161),
+        "cadcraft" => Some(49162),
+        "soundcraft" => Some(49163),
+        "figcraft" => Some(49164),
+        "hop" => Some(49165),
+        _ => None,
+    }
+}
+
 #[derive(Default)]
 pub struct Runner {
     children: HashMap<String, Vec<Child>>,
@@ -472,11 +512,30 @@ impl Runner {
         if exe.extension().is_some_and(|e| e.eq_ignore_ascii_case("app")) {
             let mut cmd = Command::new("open");
             cmd.arg("-n").arg(exe);
+            let mut subargs = Vec::new();
+            if let Some(port) = get_app_control_port(id) {
+                subargs.push("--control".to_string());
+                subargs.push(port.to_string());
+            }
             if let Some(f) = file {
-                cmd.arg("--args").arg(f);
+                subargs.push(f.to_string_lossy().to_string());
+            }
+            if !subargs.is_empty() {
+                cmd.arg("--args");
+                for a in subargs {
+                    cmd.arg(a);
+                }
             }
             cmd.env("ARTCRAFT_PROJECTS_DIR", save_dir);
             cmd.env("ARTCRAFT_SAVES_DIR", save_dir);
+            if let Some(port) = get_app_control_port(id) {
+                let port_str = port.to_string();
+                let upper = id.to_uppercase();
+                cmd.env(format!("{upper}_CONTROL_PORT"), &port_str);
+                cmd.env(format!("{upper}_CONTROL_TOKEN"), COMMON_CONTROL_TOKEN);
+                cmd.env("ARTCRAFT_CONTROL_PORT", &port_str);
+                cmd.env("ARTCRAFT_CONTROL_TOKEN", COMMON_CONTROL_TOKEN);
+            }
             let child = cmd.spawn()?;
             let pid = child.id();
             self.children.entry(id.to_string()).or_default().push(child);
@@ -509,9 +568,37 @@ impl Runner {
         cmd.env("ARTCRAFT_PROJECTS_DIR", save_dir);
         cmd.env("ARTCRAFT_SAVES_DIR", save_dir);
 
+        // Control port, token, and environment variables for all Craft apps (including hop)
+        if let Some(port) = get_app_control_port(id) {
+            // Pass `--control <port>` argument so the app starts its live RPC control server
+            cmd.arg("--control");
+            cmd.arg(port.to_string());
+
+            let port_str = port.to_string();
+            let upper = id.to_uppercase();
+
+            // 1. App-specific control port and token (e.g. PHOTOCRAFT_CONTROL_PORT)
+            cmd.env(format!("{upper}_CONTROL_PORT"), &port_str);
+            cmd.env(format!("{upper}_CONTROL_TOKEN"), COMMON_CONTROL_TOKEN);
+
+            // 2. Generic ArtCraft suite control environment variables
+            cmd.env("ARTCRAFT_CONTROL_PORT", &port_str);
+            cmd.env("ARTCRAFT_CONTROL_TOKEN", COMMON_CONTROL_TOKEN);
+
+            // 3. Automation read & write sandboxes
+            let root = std::env::var("SystemDrive")
+                .map(|d| format!("{d}/"))
+                .unwrap_or_else(|_| if cfg!(windows) { "C:/".to_string() } else { "/".to_string() });
+            cmd.env(format!("{upper}_AUTOMATION_READ_ROOT"), &root);
+            cmd.env(format!("{upper}_AUTOMATION_WRITE_ROOT"), &root);
+            cmd.env("ARTCRAFT_AUTOMATION_READ_ROOT", &root);
+            cmd.env("ARTCRAFT_AUTOMATION_WRITE_ROOT", &root);
+        }
+
         if let Some(f) = file {
             cmd.arg(f);
         }
+        cmd.stdin(std::process::Stdio::null());
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
@@ -524,10 +611,20 @@ impl Runner {
         Ok(pid)
     }
 
-    /// Drops children that have exited.
+    /// Drops children that have exited and logs exit status.
     pub fn poll(&mut self) {
-        for list in self.children.values_mut() {
-            list.retain_mut(|c| matches!(c.try_wait(), Ok(None)));
+        for (id, list) in &mut self.children {
+            list.retain_mut(|c| match c.try_wait() {
+                Ok(None) => true,
+                Ok(Some(status)) => {
+                    log(&format!("app {id} (pid {}) exited: {status:?}", c.id()));
+                    false
+                }
+                Err(e) => {
+                    log(&format!("app {id} (pid {}) wait error: {e}", c.id()));
+                    false
+                }
+            });
         }
         self.children.retain(|_, v| !v.is_empty());
     }
@@ -585,6 +682,90 @@ pub fn focus_process(_pids: &[u32]) -> bool {
     false
 }
 
+/// Returns the [left, top, right, bottom] screen rect of a running app window's client area.
+/// Matches either by child process PID or by top-level window title.
+#[cfg(windows)]
+#[allow(unsafe_code)]
+pub fn get_app_window_rect(pids: &[u32], app_name: &str) -> Option<[f32; 4]> {
+    use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM, POINT, RECT};
+    use windows_sys::Win32::Graphics::Gdi::ClientToScreen;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GetClientRect, GetWindowTextW, GetWindowThreadProcessId, IsIconic,
+        IsWindowVisible,
+    };
+
+    struct Ctx {
+        pids: Vec<u32>,
+        name: String,
+        best_area: i64,
+        rect: Option<[f32; 4]>,
+    }
+
+    unsafe extern "system" fn cb(hwnd: HWND, lp: LPARAM) -> BOOL {
+        let ctx = &mut *(lp as *mut Ctx);
+        if IsWindowVisible(hwnd) == 0 || IsIconic(hwnd) != 0 {
+            return 1;
+        }
+
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(hwnd, &mut pid);
+
+        let mut matched = !ctx.pids.is_empty() && ctx.pids.contains(&pid);
+        let mut buf = [0u16; 256];
+        let len = GetWindowTextW(hwnd, buf.as_mut_ptr(), buf.len() as i32);
+        let title = if len > 0 {
+            String::from_utf16_lossy(&buf[..len as usize])
+        } else {
+            String::new()
+        };
+
+        if !matched && !ctx.name.is_empty() && !title.is_empty() {
+            if title.to_lowercase().contains(&ctx.name.to_lowercase()) {
+                matched = true;
+            }
+        }
+
+        if matched {
+            let mut client_rc: RECT = std::mem::zeroed();
+            if GetClientRect(hwnd, &mut client_rc) != 0 {
+                let raw_w = client_rc.right - client_rc.left;
+                let raw_h = client_rc.bottom - client_rc.top;
+                // Only consider substantial application windows (exclude tooltips/assistants)
+                if raw_w >= 300 && raw_h >= 200 {
+                    let area = (raw_w as i64) * (raw_h as i64);
+                    if area > ctx.best_area {
+                        ctx.best_area = area;
+                        let mut pt = POINT { x: 0, y: 0 };
+                        ClientToScreen(hwnd, &mut pt);
+                        let left = pt.x as f32;
+                        let top = pt.y as f32;
+                        let right = (pt.x + raw_w) as f32;
+                        let bottom = (pt.y + raw_h) as f32;
+                        ctx.rect = Some([left, top, right, bottom]);
+                    }
+                }
+            }
+        }
+        1
+    }
+
+    let mut ctx = Ctx {
+        pids: pids.to_vec(),
+        name: app_name.to_string(),
+        best_area: 0,
+        rect: None,
+    };
+    unsafe {
+        EnumWindows(Some(cb), &mut ctx as *mut Ctx as LPARAM);
+    }
+    ctx.rect
+}
+
+#[cfg(not(windows))]
+pub fn get_app_window_rect(_pids: &[u32], _app_name: &str) -> Option<[f32; 4]> {
+    None
+}
+
 // ---------------------------------------------------------------- state & logging
 
 #[derive(Serialize, Deserialize, Clone, PartialEq)]
@@ -602,6 +783,16 @@ pub struct State {
     pub language: String, // "ko" or "en"
     #[serde(default)]
     pub custom_saves_dir: Option<String>,
+    #[serde(default = "default_true")]
+    pub auto_show_companion: bool,
+    #[serde(default)]
+    pub gemini_api_key: String,
+    #[serde(default)]
+    pub ai_provider: u8,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn default_lang() -> String {
@@ -617,6 +808,9 @@ impl Default for State {
             minimize_on_open: false,
             language: "ko".to_string(),
             custom_saves_dir: None,
+            auto_show_companion: true,
+            gemini_api_key: String::new(),
+            ai_provider: 0,
         }
     }
 }

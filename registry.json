@@ -240,7 +240,7 @@
       "website": "https://github.com/golbin/hop",
       "exe": "hop.exe",
       "extensions": ["hwp", "hwpx"],
-      "mcp_args": []
+      "mcp_args": ["mcp", "--connect", "127.0.0.1:49165"]
     }
   ]
 }

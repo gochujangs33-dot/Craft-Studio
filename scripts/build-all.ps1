@@ -17,7 +17,16 @@ try {
 } finally { Pop-Location }
 
 $dist = Join-Path $root "dist"
-Copy-Item (Join-Path $root "launcher\target\release\ArtCraftStudio.exe") $dist -Force
+$targetExe = Join-Path $dist "ArtCraftStudio.exe"
+$srcExe = Join-Path $root "launcher\target\release\ArtCraftStudio.exe"
+try {
+    Copy-Item $srcExe $dist -Force
+} catch {
+    $oldExe = Join-Path $dist "ArtCraftStudio.exe.old"
+    if (Test-Path $oldExe) { Remove-Item $oldExe -Force -ErrorAction SilentlyContinue }
+    Move-Item $targetExe $oldExe -Force
+    Copy-Item $srcExe $dist -Force
+}
 
 # License notices (Apache-2.0 requires shipping the license + NOTICE files)
 $lic = Join-Path $dist "LICENSES"
@@ -29,6 +38,8 @@ Get-ChildItem (Join-Path $dist "apps") -Directory | ForEach-Object {
 $distScripts = Join-Path $dist "scripts"
 New-Item -ItemType Directory -Force $distScripts | Out-Null
 Copy-Item (Join-Path $root "scripts\update-app.ps1") $distScripts -Force
+Copy-Item (Join-Path $root "scripts\rembg_cutout.py") $distScripts -Force -ErrorAction SilentlyContinue
 Copy-Item (Join-Path $root "registry.json") $dist -Force
+Copy-Item (Join-Path $root "version.json") $dist -Force
 
 Write-Host "Bundle ready: $dist\ArtCraftStudio.exe"

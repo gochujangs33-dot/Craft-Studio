@@ -17,6 +17,11 @@
 /scratch/
 *.log
 
+# Local workspace configurations & status caches
+.mcp.json*
+launcher/.mcp.json*
+.upstream_status.json
+
 # Windows / OS metadata
 Thumbs.db
 desktop.ini

@@ -142,6 +142,28 @@ impl UpdateManager {
                 }
             }
         }
+
+        // Also check actual installed .version files inside apps/ and dist/apps/
+        let app_roots = [exe_dir.join("apps"), exe_dir.join("dist/apps"), PathBuf::from("dist/apps")];
+        for root in &app_roots {
+            if let Ok(rd) = std::fs::read_dir(root) {
+                for ent in rd.flatten() {
+                    let ver_file = ent.path().join(".version");
+                    if let Ok(content) = std::fs::read_to_string(ver_file) {
+                        let v = content.trim().trim_start_matches('v').to_string();
+                        let id = ent.file_name().to_string_lossy().to_string();
+                        if let Some(existing) = map.get(&id) {
+                            if is_newer(&v, existing) {
+                                map.insert(id, v);
+                            }
+                        } else {
+                            map.insert(id, v);
+                        }
+                    }
+                }
+            }
+        }
+
         map
     }
 
@@ -253,7 +275,13 @@ impl UpdateManager {
 
                 if let Ok(mut map) = latest_store.lock() {
                     for (id, ver) in &gathered {
-                        map.insert(id.clone(), ver.clone());
+                        if let Some(existing) = map.get(id) {
+                            if is_newer(ver, existing) {
+                                map.insert(id.clone(), ver.clone());
+                            }
+                        } else {
+                            map.insert(id.clone(), ver.clone());
+                        }
                         found += 1;
                     }
                 }

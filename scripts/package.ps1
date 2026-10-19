@@ -19,7 +19,10 @@ if ($iscc) {
 } else {
     Write-Warning "Inno Setup 6 not found (winget install JRSoftware.InnoSetup). Creating portable zip instead."
     $zip = Join-Path $out "ArtCraftStudio-portable-x64.zip"
-    if (Test-Path $zip) { Remove-Item $zip }
-    Compress-Archive -Path "$dist\*" -DestinationPath $zip -CompressionLevel Optimal
+    if (Test-Path $zip) { Remove-Item $zip -Force }
+    tar -a -c -f $zip --exclude="*.log" --exclude="*.old" -C $dist .
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path $zip)) {
+        Compress-Archive -Path "$dist\*" -DestinationPath $zip -CompressionLevel Optimal
+    }
     Write-Host "Portable zip written to $zip"
 }

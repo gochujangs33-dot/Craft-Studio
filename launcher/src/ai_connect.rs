@@ -20,16 +20,18 @@ pub enum Client {
     Grok,
     Cursor,
     GeminiCli,
+    Antigravity,
 }
 
 impl Client {
-    pub const ALL: [Client; 6] = [
+    pub const ALL: [Client; 7] = [
         Client::ClaudeDesktop,
         Client::ClaudeCode,
         Client::Codex,
         Client::Grok,
         Client::Cursor,
         Client::GeminiCli,
+        Client::Antigravity,
     ];
 
     pub fn label(self) -> &'static str {
@@ -40,6 +42,7 @@ impl Client {
             Client::Grok => "xAI Grok",
             Client::Cursor => "Cursor",
             Client::GeminiCli => "Gemini CLI",
+            Client::Antigravity => "Antigravity (.mcp.json)",
         }
     }
 
@@ -53,12 +56,22 @@ impl Client {
             Client::Grok => home.join(".grok").join("config.toml"),
             Client::Cursor => home.join(".cursor").join("mcp.json"),
             Client::GeminiCli => home.join(".gemini").join("settings.json"),
+            Client::Antigravity => {
+                if let Ok(cwd) = std::env::current_dir() {
+                    cwd.join(".mcp.json")
+                } else if let Ok(exe) = std::env::current_exe() {
+                    exe.parent().map(|p| p.join(".mcp.json")).unwrap_or_else(|| home.join(".mcp.json"))
+                } else {
+                    home.join(".mcp.json")
+                }
+            }
         })
     }
 
     /// The client looks installed when its config folder or file exists.
     pub fn is_present(self) -> bool {
         match self {
+            Client::Antigravity => true,
             Client::ClaudeCode => self.config_path().map(|p| p.is_file()).unwrap_or(false),
             _ => self
                 .config_path()
@@ -134,6 +147,11 @@ pub fn find_cli(dir: &Path, id: &str) -> Option<PathBuf> {
 
 /// MCP server entries for every installed app that has a CLI and declares `mcp_args`.
 pub fn server_entries(entries: &[AppEntry]) -> Vec<(String, Value)> {
+    let bridge_servers = crate::mcp_config_gen::generate_mcp_server_entries(entries, None);
+    if !bridge_servers.is_empty() {
+        return bridge_servers;
+    }
+    // Fallback to registry default args if custom CLI search returned empty
     entries
         .iter()
         .filter(|e| e.exe.is_some() && !e.meta.mcp_args.is_empty())
@@ -357,14 +375,7 @@ pub fn connect(client: Client, entries: &[AppEntry]) -> Result<usize, String> {
     if servers.is_empty() {
         return Err("no installed app with a CLI was found".into());
     }
-    let mut root = read_config(&path)?;
-    let map = servers_mut(&mut root)?;
-    map.retain(|k, _| !k.starts_with(PREFIX));
-    let n = servers.len();
-    for (k, v) in servers {
-        map.insert(k, v);
-    }
-    write_config(&path, &root)?;
+    let n = crate::mcp_config_gen::merge_mcp_json_file(&path, &servers)?;
     log(&format!("ai_connect: registered {n} MCP servers with {} ({})", client.label(), path.display()));
     Ok(n)
 }

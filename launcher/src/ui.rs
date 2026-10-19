@@ -78,6 +78,9 @@ pub struct Launcher {
     last_poll: Instant,
     pending_files: Vec<PathBuf>,
     launch_after_install: Option<String>,
+    companions: HashMap<String, crate::companion::CompanionState>,
+    pub active_companion_app: String,
+    pub embedded_ai_open: bool,
 }
 
 fn load_texture(ctx: &egui::Context, name: &str, bytes: &[u8], max_w: Option<u32>) -> Option<TextureHandle> {
@@ -119,6 +122,13 @@ impl Launcher {
             saves_dir.display(),
             entries.len()
         ));
+        let mut companions: HashMap<String, crate::companion::CompanionState> = HashMap::new();
+        for e in &entries {
+            let id = e.meta.id.clone();
+            let name = e.meta.name().to_string();
+            companions.insert(id.clone(), crate::companion::CompanionState::new_for_app(&id, &name));
+        }
+
         let mut launcher = Self {
             exe_dir: exe_dir.clone(),
             registry,
@@ -143,6 +153,9 @@ impl Launcher {
             last_poll: Instant::now(),
             pending_files: file_args,
             launch_after_install: None,
+            companions,
+            active_companion_app: "photocraft".to_string(),
+            embedded_ai_open: true,
         };
 
         // 3M-style Startup Auto-Check: automatically match versions from GitHub on launch
@@ -308,7 +321,14 @@ impl Launcher {
         // Always launch as a new independent process (multi-window multitasking)
         match self.runner.launch(&id, &exe, &save_dir, file) {
             Ok(pid) => {
-                apps::log(&format!("launched {id} (pid {pid}) file={file:?} save_dir={save_dir:?}"));
+                apps::log(&format!("launched {id} (pid {pid}) exe={exe:?} file={file:?} save_dir={save_dir:?}"));
+                self.active_companion_app = id.clone();
+                self.embedded_ai_open = true;
+                let comp = self.companions.entry(id.clone()).or_insert_with(|| crate::companion::CompanionState::new_for_app(&id, &name));
+                comp.is_open = true;
+                comp.is_minimized = false;
+                comp.api_key = self.state.gemini_api_key.clone();
+                comp.provider = crate::companion::AiProvider::from_u8(self.state.ai_provider);
                 self.state.last_opened.insert(id.clone(), apps::now_secs());
                 let run_count = self.runner.pids(&id).len();
                 let what = if self.is_ko() {
@@ -504,6 +524,18 @@ impl Launcher {
                         let set_tooltip = if ko { "환경설정" } else { "Settings" };
                         if chip(ui, "⚙", self.show_settings, false).on_hover_text(set_tooltip).clicked() {
                             self.show_settings = !self.show_settings;
+                        }
+
+                        // AI Companion toggle button (Controls in-app companion panel on launch)
+                        let any_open = self.state.auto_show_companion;
+                        let ai_lbl = if any_open { "🤖 앱 내장 AI 패널 (켜짐)" } else { "🤖 앱 내장 AI 패널 (꺼짐)" };
+                        let ai_tooltip = if ko { "PhotoCraft 등 프로그램 실행 시 우측 하단 내장 AI 채팅창 표시 설정" } else { "Toggle in-app AI companion panel on app launch" };
+                        if chip(ui, ai_lbl, any_open, false).on_hover_text(ai_tooltip).clicked() {
+                            self.state.auto_show_companion = !self.state.auto_show_companion;
+                            for c in self.companions.values_mut() {
+                                c.is_open = self.state.auto_show_companion;
+                            }
+                            self.state.save();
                         }
 
                         // Update Manager button with auto-detected badge
@@ -1496,13 +1528,24 @@ impl Launcher {
                                 ui.label(RichText::new(format!("v{cur_ver}")).font(mono(10.5_f32)).color(MUTED));
 
                                 let latest = self.updater.latest_version(&e.meta.id);
-                                let latest_str = latest.as_deref().unwrap_or("—");
                                 let is_updating = self.updater.is_updating(&e.meta.id);
 
                                 let has_update = if let (Some(cur), Some(lat)) = (e.version.as_deref(), latest.as_deref()) {
                                     crate::updater::is_newer(lat, cur)
                                 } else {
                                     false
+                                };
+
+                                let latest_str = if has_update {
+                                    latest.as_deref().unwrap_or(cur_ver)
+                                } else if let (Some(cur), Some(lat)) = (e.version.as_deref(), latest.as_deref()) {
+                                    if crate::updater::is_newer(cur, lat) {
+                                        cur
+                                    } else {
+                                        lat
+                                    }
+                                } else {
+                                    latest.as_deref().unwrap_or(cur_ver)
                                 };
 
                                 if has_update {
@@ -1646,72 +1689,221 @@ impl Launcher {
                 ui.separator();
                 ui.add_space(8.0_f32);
 
-                // --- 4. AI (MCP) Connection Section ---
-                let ai_hdr = if ko { "🤖 AI 연동 (Claude / Codex / Grok / Cursor / Gemini)" } else { "🤖 AI CONNECTION (MCP)" };
-                ui.label(RichText::new(ai_hdr).font(mono(10.5_f32)).color(Color32::from_rgb(0x4C, 0xCE, 0xAC)));
+                // --- 4. External AI Agent One-Click MCP Integration ---
+                let ai_hdr = if ko {
+                    "🔌 외부 IDE / AI 에이전트 MCP 브릿지"
+                } else {
+                    "🔌 EXTERNAL AI AGENT MCP BRIDGE"
+                };
+                ui.label(RichText::new(ai_hdr).font(mono(11.0_f32)).color(Color32::from_rgb(0x4C, 0xCE, 0xAC)));
                 ui.add_space(2.0_f32);
                 let ai_sub = if ko {
-                    "평소 쓰는 AI 앱(Claude, Codex, Grok, Cursor 등)에서 Craft 앱들을 직접 다룰 수 있도록 연결합니다."
+                    "Cursor, Claude Desktop, Antigravity(.mcp.json) 등 외부 AI 도구들이 14종 Craft 앱을 MCP 및 --bridge 모드로 직접 제어할 수 있도록 원클릭으로 자동 등록합니다."
                 } else {
-                    "Connect Craft apps to your AI desktop clients (Claude, Codex, Grok, Cursor, etc.)."
+                    "One-click auto-registration for Cursor, Claude Desktop, Antigravity (.mcp.json) to control 14 Craft apps via MCP & --bridge mode."
                 };
                 ui.label(RichText::new(ai_sub).size(10.0_f32).color(DIM));
-                ui.add_space(5.0_f32);
+                ui.add_space(6.0_f32);
 
-                for &client in &crate::ai_connect::Client::ALL {
-                    ui.horizontal(|ui| {
-                        let is_installed = client.is_present();
-                        let count = crate::ai_connect::status(client).unwrap_or(0);
-
-                        let badge = if count > 0 {
-                            RichText::new(format!("● {count}개 연결됨")).font(mono(9.5_f32)).color(OK)
-                        } else if is_installed {
-                            RichText::new("○ 대기 중").font(mono(9.5_f32)).color(MUTED)
-                        } else {
-                            RichText::new("미설치").font(mono(9.5_f32)).color(DIM)
-                        };
-
-                        ui.label(RichText::new(client.label()).font(mono(10.0_f32)).color(INK));
-                        ui.label(badge);
-
-                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            if count > 0 {
-                                let disc_txt = if ko { "연결 해제" } else { "Disconnect" };
-                                if ui.small_button(disc_txt).clicked() {
-                                    match crate::ai_connect::disconnect(client) {
-                                        Ok(n) => self.toast(format!("{}에서 {n}개 도구 연결을 해제했습니다.", client.label()), MUTED),
-                                        Err(e) => self.toast(format!("해제 실패: {e}"), ERR),
-                                    }
-                                }
+                // Prominent One-Click Injection Card
+                Frame::new()
+                    .fill(Color32::from_rgb(0x13, 0x1A, 0x26))
+                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(0x23, 0x3E, 0x62)))
+                    .corner_radius(8.0_f32)
+                    .inner_margin(Margin::symmetric(14, 10))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            let btn_title = if ko {
+                                "Cursor / Claude / Antigravity에 14종 Craft 앱 연동 설정 자동 주입"
                             } else {
-                                let conn_txt = if ko { "연결하기" } else { "Connect" };
-                                if ui.small_button(conn_txt).clicked() {
-                                    match crate::ai_connect::connect(client, &self.entries) {
-                                        Ok(n) => self.toast(format!("{}에 {n}개 앱 도구 등록 완료! 앱을 재시작하면 인식됩니다.", client.label()), OK),
-                                        Err(e) => self.toast(format!("연결 실패: {e}"), ERR),
-                                    }
+                                "Auto-Inject 14 Craft Apps MCP Bridge to Cursor / Claude / Antigravity"
+                            };
+                            let btn_tip = if ko {
+                                "클릭 시 PC에 설치된 Cursor(%USERPROFILE%\\.cursor\\mcp.json), Claude Desktop(%APPDATA%\\Claude), Antigravity(.mcp.json)에 14종 앱의 고유 포트(49152~)와 보안 토큰이 포함된 --bridge 설정을 즉시 병합 주입합니다."
+                            } else {
+                                "Merges MCP bridge settings with ports and security token into Cursor, Claude Desktop, and Antigravity."
+                            };
+
+                            let inject_btn = egui::Button::new(
+                                RichText::new(format!("🚀 {btn_title}"))
+                                    .font(mono(11.0_f32))
+                                    .strong()
+                                    .color(Color32::from_rgb(0x10, 0x18, 0x20)),
+                            )
+                            .fill(Color32::from_rgb(0x50, 0xFA, 0x9E))
+                            .corner_radius(6.0_f32);
+
+                            if ui.add(inject_btn).on_hover_text(btn_tip).clicked() {
+                                let reports = crate::mcp_config_gen::sync_all_ai_mcp_configs(
+                                    &self.entries,
+                                    Some(&self.saves_dir),
+                                );
+                                let successes: Vec<_> = reports.iter().filter(|r| r.success).collect();
+                                if !successes.is_empty() {
+                                    let toast_msg = if ko {
+                                        "성공적으로 연동되었습니다!"
+                                    } else {
+                                        "Successfully connected!"
+                                    };
+                                    self.toast(toast_msg, OK);
+                                } else {
+                                    let err_msg = if ko {
+                                        "연동 실패: 대상 설정 파일을 생성하거나 수정하지 못했습니다."
+                                    } else {
+                                        "Connection failed: Unable to update target configuration files."
+                                    };
+                                    self.toast(err_msg, ERR);
                                 }
                             }
                         });
-                    });
-                    ui.add_space(2.0_f32);
-                }
-
-                ui.add_space(4.0_f32);
-                ui.horizontal(|ui| {
-                    let copy_btn_txt = if ko { "📋 MCP JSON 복사 (기타 AI용)" } else { "📋 Copy MCP JSON" };
-                    if ui.button(copy_btn_txt).on_hover_text(
-                        if ko { "Windsurf, Cline 등 기타 AI 클라이언트 설정에 붙여넣을 수 있는 JSON을 복사합니다." }
-                        else { "Copy MCP JSON config for Windsurf, Cline or other AI clients." }
-                    ).clicked() {
-                        let json = crate::ai_connect::mcp_json_string(&self.entries);
-                        ctx.copy_text(json);
-                        let msg = if ko {
-                            "클립보드에 MCP 설정 JSON이 복사되었습니다!"
+                        ui.add_space(3.0_f32);
+                        let desc_lbl = if ko {
+                            "💡 기존 사용자의 타사 MCP 설정은 100% 안전하게 보존되며, Craft 앱의 고유 포트와 보안 토큰이 최신 경로로 등록됩니다."
                         } else {
-                            "MCP JSON copied to clipboard!"
+                            "💡 Preserves your existing custom MCP servers and registers Craft apps with unique ports (49152+) and security token."
                         };
-                        self.toast(msg, OK);
+                        ui.label(RichText::new(desc_lbl).font(mono(9.5_f32)).color(MUTED));
+                    });
+
+                ui.add_space(6.0_f32);
+
+                // Collapsible Individual AI Client Management
+                let detail_lbl = if ko {
+                    "▶ 세부 AI 클라이언트 상태 및 개별 설정"
+                } else {
+                    "▶ Detailed AI Client Status & Settings"
+                };
+                egui::CollapsingHeader::new(RichText::new(detail_lbl).font(mono(10.0_f32)).color(MUTED))
+                    .default_open(false)
+                    .show(ui, |ui| {
+                        ui.add_space(4.0_f32);
+                        for &client in &crate::ai_connect::Client::ALL {
+                            ui.horizontal(|ui| {
+                                let is_installed = client.is_present();
+                                let count = crate::ai_connect::status(client).unwrap_or(0);
+
+                                let badge = if count > 0 {
+                                    RichText::new(format!("● {count}개 연결됨")).font(mono(9.5_f32)).color(OK)
+                                } else if is_installed {
+                                    RichText::new("○ 대기 중").font(mono(9.5_f32)).color(MUTED)
+                                } else {
+                                    RichText::new("미설치").font(mono(9.5_f32)).color(DIM)
+                                };
+
+                                ui.label(RichText::new(client.label()).font(mono(10.0_f32)).color(INK));
+                                ui.label(badge);
+
+                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                    if count > 0 {
+                                        let disc_txt = if ko { "연결 해제" } else { "Disconnect" };
+                                        if ui.small_button(disc_txt).clicked() {
+                                            match crate::ai_connect::disconnect(client) {
+                                                Ok(n) => self.toast(format!("{}에서 {n}개 도구 연결을 해제했습니다.", client.label()), MUTED),
+                                                Err(e) => self.toast(format!("해제 실패: {e}"), ERR),
+                                            }
+                                        }
+                                    } else {
+                                        let conn_txt = if ko { "개별 연결" } else { "Connect" };
+                                        if ui.small_button(conn_txt).clicked() {
+                                            match crate::ai_connect::connect(client, &self.entries) {
+                                                Ok(n) => self.toast(format!("{}에 {n}개 앱 도구 등록 완료! 앱을 재시작하면 인식됩니다.", client.label()), OK),
+                                                Err(e) => self.toast(format!("연결 실패: {e}"), ERR),
+                                            }
+                                        }
+                                    }
+                                });
+                            });
+                            ui.add_space(2.0_f32);
+                        }
+
+                        ui.add_space(4.0_f32);
+                        ui.horizontal(|ui| {
+                            let copy_btn_txt = if ko { "📋 MCP JSON 복사 (기타 AI 클라이언트용)" } else { "📋 Copy MCP JSON" };
+                            if ui
+                                .button(copy_btn_txt)
+                                .on_hover_text(if ko {
+                                    "Windsurf, Cline 등 기타 AI 클라이언트 설정에 붙여넣을 수 있는 JSON을 복사합니다."
+                                } else {
+                                    "Copy MCP JSON config for Windsurf, Cline or other AI clients."
+                                })
+                                .clicked()
+                            {
+                                let json = crate::ai_connect::mcp_json_string(&self.entries);
+                                ctx.copy_text(json);
+                                let msg = if ko {
+                                    "클립보드에 MCP 설정 JSON이 복사되었습니다!"
+                                } else {
+                                    "MCP JSON copied to clipboard!"
+                                };
+                                self.toast(msg, OK);
+                            }
+                        });
+                    });
+
+                ui.add_space(8.0_f32);
+                ui.separator();
+                ui.add_space(8.0_f32);
+
+                // --- 5. AI Copilot Companion Settings ---
+                let comp_hdr = if ko { "💬 앱 내장 AI 어시스턴트 (런처 우측 하단 위젯)" } else { "💬 IN-APP AI ASSISTANT (DOCK WIDGET)" };
+                ui.label(RichText::new(comp_hdr).font(mono(10.5_f32)).color(Color32::from_rgb(0x68, 0x98, 0xFF)));
+                ui.add_space(2.0_f32);
+                let auto_show_lbl = if ko { "프로그램 실행 시 우측 하단 AI 위젯 자동 표시" } else { "Auto-show docked AI widget when launching app" };
+                if ui.checkbox(&mut self.state.auto_show_companion, auto_show_lbl).changed() {
+                    for c in self.companions.values_mut() {
+                        c.auto_show_on_launch = self.state.auto_show_companion;
+                    }
+                }
+                ui.add_space(4.0_f32);
+
+                // AI Provider Selector (Gemini, Claude, OpenAI Codex, Ollama)
+                let mut cur_prov = crate::companion::AiProvider::from_u8(self.state.ai_provider);
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(if ko { "AI 모델 선택:" } else { "AI Provider:" }).font(mono(9.5_f32)).color(MUTED));
+                    let prev = cur_prov;
+                    egui::ComboBox::from_id_salt("companion_provider_select")
+                        .selected_text(RichText::new(cur_prov.label()).font(mono(9.5_f32)).color(Color32::from_rgb(0x68, 0x98, 0xFF)))
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut cur_prov, crate::companion::AiProvider::Gemini, "Google Gemini (추천/무료)");
+                            ui.selectable_value(&mut cur_prov, crate::companion::AiProvider::Claude, "Anthropic Claude");
+                            ui.selectable_value(&mut cur_prov, crate::companion::AiProvider::OpenAi, "OpenAI Codex / ChatGPT");
+                            ui.selectable_value(&mut cur_prov, crate::companion::AiProvider::Ollama, "Ollama (로컬 오프라인)");
+                        });
+                    if cur_prov != prev {
+                        self.state.ai_provider = cur_prov.to_u8();
+                        for c in self.companions.values_mut() {
+                            c.provider = cur_prov;
+                        }
+                    }
+                });
+                ui.add_space(4.0_f32);
+
+                ui.horizontal(|ui| {
+                    let key_lbl = match cur_prov {
+                        crate::companion::AiProvider::Claude => "Claude Key:",
+                        crate::companion::AiProvider::OpenAi => "OpenAI Key:",
+                        crate::companion::AiProvider::Ollama => "Ollama Host:",
+                        _ => "Gemini Key:",
+                    };
+                    ui.label(RichText::new(key_lbl).font(mono(9.5_f32)).color(MUTED));
+                    let is_pwd = cur_prov != crate::companion::AiProvider::Ollama;
+                    let avail_w = ui.available_width() - 8.0_f32;
+                    let api_edit = ui.add(
+                        TextEdit::singleline(&mut self.state.gemini_api_key)
+                            .password(is_pwd)
+                            .desired_width(avail_w)
+                            .hint_text(if cur_prov == crate::companion::AiProvider::Ollama {
+                                "http://localhost:11434"
+                            } else if ko {
+                                "선택 사항 (API Key 입력 시 기능 활성화)"
+                            } else {
+                                "Optional API Key"
+                            }),
+                    );
+                    if api_edit.changed() {
+                        for c in self.companions.values_mut() {
+                            c.api_key = self.state.gemini_api_key.clone();
+                        }
                     }
                 });
 
@@ -1719,7 +1911,7 @@ impl Launcher {
                 ui.separator();
                 ui.add_space(8.0_f32);
 
-                // --- 4. Update Data Source Section ---
+                // --- 6. Update Data Source Section ---
                 let upd_hdr = if ko { "🌐 업데이트 소스 (GitHub)" } else { "🌐 UPDATE SOURCE (GITHUB)" };
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(upd_hdr).font(mono(10.5_f32)).color(Color32::from_rgb(0xF5, 0xC0, 0x40)));
@@ -1729,13 +1921,9 @@ impl Launcher {
                 });
                 ui.add_space(4.0_f32);
                 ui.horizontal(|ui| {
-                    let repo_btn = if ko { "🌐 저장소 열기" } else { "GitHub Repo" };
+                    let repo_btn = if ko { "🌐 GitHub 저장소" } else { "GitHub Repo" };
                     if ui.button(repo_btn).clicked() {
                         actions.push(Action::Url("https://github.com/gochujangs33-dot/Craft-Studio".to_string()));
-                    }
-                    let manifest_btn = if ko { "📄 version.json" } else { "version.json" };
-                    if ui.button(manifest_btn).clicked() {
-                        actions.push(Action::Url("https://raw.githubusercontent.com/gochujangs33-dot/Craft-Studio/main/version.json".to_string()));
                     }
                     let check_btn = if ko { "🔄 업데이트 확인" } else { "Check Updates" };
                     if ui.button(check_btn).clicked() {
@@ -1798,6 +1986,93 @@ impl Launcher {
             });
         ctx.request_repaint_after(Duration::from_millis(50));
     }
+
+    #[allow(dead_code)]
+    fn embedded_ai_dock(&mut self, ctx: &egui::Context, _actions: &mut Vec<Action>) {
+        if !self.embedded_ai_open {
+            return;
+        }
+
+        let temp_dir = std::env::temp_dir().join("ArtCraftCompanion");
+        let active_id = self.active_companion_app.clone();
+        let app_name = self
+            .entries
+            .iter()
+            .find(|e| e.meta.id == active_id)
+            .map(|e| e.meta.name().to_string())
+            .unwrap_or_else(|| "PhotoCraft".to_string());
+
+        let comp = self
+            .companions
+            .entry(active_id.clone())
+            .or_insert_with(|| crate::companion::CompanionState::new_for_app(&active_id, &app_name));
+        comp.api_key = self.state.gemini_api_key.clone();
+        comp.provider = crate::companion::AiProvider::from_u8(self.state.ai_provider);
+
+        // Check if user closed companion from internal header
+        if !comp.is_open {
+            self.embedded_ai_open = false;
+            comp.is_open = true;
+            return;
+        }
+
+        let (card_w, card_h) = if comp.is_minimized {
+            (240.0_f32, 42.0_f32)
+        } else {
+            (360.0_f32, 490.0_f32)
+        };
+
+        let mut open_action = None;
+
+        egui::Area::new(Id::new("embedded_ai_dock_area"))
+            .anchor(Align2::RIGHT_BOTTOM, vec2(-24.0, -32.0))
+            .show(ctx, |ui| {
+                ui.set_width(card_w);
+                ui.set_height(card_h);
+
+                Frame::new()
+                    .fill(Color32::from_rgb(0x13, 0x16, 0x20))
+                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(0x2E, 0x36, 0x4D)))
+                    .corner_radius(10.0_f32)
+                    .inner_margin(Margin::same(10))
+                    .show(ui, |ui| {
+                        if !comp.is_minimized {
+                            ui.horizontal(|ui| {
+                                for target in &["photocraft", "wordcraft", "gridcraft", "figcraft"] {
+                                    let is_active = self.active_companion_app == *target;
+                                    let label = match *target {
+                                        "photocraft" => "PhotoCraft",
+                                        "wordcraft" => "WordCraft",
+                                        "gridcraft" => "GridCraft",
+                                        "figcraft" => "FigCraft",
+                                        _ => *target,
+                                    };
+                                    if chip(ui, label, is_active, false).clicked() {
+                                        self.active_companion_app = target.to_string();
+                                    }
+                                }
+                            });
+                            ui.add_space(4.0_f32);
+                        }
+
+                        comp.render_embedded(
+                            ui,
+                            ctx,
+                            &app_name,
+                            &self.entries,
+                            &self.saves_dir,
+                            &temp_dir,
+                            &mut open_action,
+                        );
+                    });
+            });
+
+        if let Some((target, file_path)) = open_action {
+            if let Some(pos) = self.entries.iter().position(|e| e.meta.id == target) {
+                self.launch(ctx, pos, Some(&file_path));
+            }
+        }
+    }
 }
 
 impl eframe::App for Launcher {
@@ -1845,7 +2120,8 @@ impl eframe::App for Launcher {
             self.refresh_status();
             self.last_poll = Instant::now();
         }
-        if self.updater.has_active_updates() || self.show_progress_modal {
+        let has_active_companion = self.companions.values().any(|c| c.is_open);
+        if self.updater.has_active_updates() || self.show_progress_modal || has_active_companion {
             ctx.request_repaint_after(Duration::from_millis(50));
         } else {
             ctx.request_repaint_after(Duration::from_millis(800));
@@ -1871,6 +2147,50 @@ impl eframe::App for Launcher {
         self.progress_modal(ctx);
         self.drop_overlay(ctx);
         self.toasts_ui(ctx);
+
+        // Render docked AI companion viewport inside running apps (PhotoCraft, etc.)
+        let mut companion_actions = Vec::new();
+        let temp_dir = std::env::temp_dir().join("ArtCraftCompanion");
+        for (app_id, companion) in self.companions.iter_mut() {
+            if !companion.is_open {
+                continue;
+            }
+            let pids = self.runner.pids(app_id);
+            let app_name = self
+                .entries
+                .iter()
+                .find(|e| &e.meta.id == app_id)
+                .map(|e| e.meta.name().to_string())
+                .unwrap_or_else(|| app_id.clone());
+
+            let is_running = !pids.is_empty() || crate::apps::get_app_window_rect(&pids, &app_name).is_some();
+            if !is_running {
+                continue;
+            }
+
+            companion.api_key = self.state.gemini_api_key.clone();
+            companion.provider = crate::companion::AiProvider::from_u8(self.state.ai_provider);
+
+            let mut action = None;
+            companion.render_for_app(
+                ctx,
+                app_id,
+                &app_name,
+                &pids,
+                &self.entries,
+                &self.saves_dir,
+                &temp_dir,
+                &mut action,
+            );
+            if let Some((target, file_path)) = action {
+                companion_actions.push((target, file_path));
+            }
+        }
+        for (target, file_path) in companion_actions {
+            if let Some(pos) = self.entries.iter().position(|e| e.meta.id == target) {
+                self.launch(ctx, pos, Some(&file_path));
+            }
+        }
 
         for a in actions {
             self.apply_action(ctx, a);

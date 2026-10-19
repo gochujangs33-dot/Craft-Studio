@@ -1,78 +1,78 @@
-{
-  "suite": "ArtCraft Studio",
-  "launcher_version": "1.0.0",
-  "repo": "https://github.com/gochujangs33-dot/Craft-Studio",
-  "updated_at": "2026-10-16T12:30:00Z",
-  "apps": {
-    "photocraft": {
-      "name": "PhotoCraft",
-      "version": "0.9.0",
-      "asset": "photocraft-0.9.0-windows-x64-portable.zip"
-    },
-    "vectorcraft": {
-      "name": "VectorCraft",
-      "version": "0.12.0",
-      "asset": "vectorcraft-0.12.0-windows-x64-portable.zip"
-    },
-    "filmcraft": {
-      "name": "FilmCraft",
-      "version": "0.8.0",
-      "asset": "filmcraft-0.8.0-windows-x64-portable.zip"
-    },
-    "lightcraft": {
-      "name": "LightCraft",
-      "version": "0.8.0",
-      "asset": "lightcraft-0.8.0-windows-x64-portable.zip"
-    },
-    "pdfcraft": {
-      "name": "PdfCraft",
-      "version": "0.8.0",
-      "asset": "pdfcraft-0.8.0-windows-x64-portable.zip"
-    },
-    "effectcraft": {
-      "name": "EffectCraft",
-      "version": "0.10.0",
-      "asset": "effectcraft-0.10.0-windows-x64-portable.zip"
-    },
-    "designcraft": {
-      "name": "DesignCraft",
-      "version": "0.8.0",
-      "asset": "designcraft-0.8.0-windows-x64-portable.zip"
-    },
-    "wordcraft": {
-      "name": "WordCraft",
-      "version": "0.7.0",
-      "asset": "wordcraft-0.7.0-windows-x64-portable.zip"
-    },
-    "deckcraft": {
-      "name": "DeckCraft",
-      "version": "0.7.0",
-      "asset": "deckcraft-0.7.0-windows-x64-portable.zip"
-    },
-    "gridcraft": {
-      "name": "GridCraft",
-      "version": "0.7.0",
-      "asset": "gridcraft-0.7.0-windows-x64-portable.zip"
-    },
-    "cadcraft": {
-      "name": "CADCraft",
-      "version": "0.7.0",
-      "asset": "cadcraft-0.7.0-windows-x64-portable.zip"
-    },
-    "soundcraft": {
-      "name": "SoundCraft",
-      "version": "0.7.0",
-      "asset": "soundcraft-0.7.0-windows-x64-portable.zip"
-    },
-    "figcraft": {
-      "name": "FigCraft",
-      "version": "0.6.0",
-      "asset": "figcraft-0.6.0-windows-x64-portable.zip"
-    },
-    "hop": {
-      "name": "HopCraft",
-      "version": "0.4.5",
-      "asset": "HOP-windows-x64.exe"
-    }
-  }
+﻿{
+    "suite":  "ArtCraft Studio",
+    "launcher_version":  "1.0.0",
+    "repo":  "https://github.com/gochujangs33-dot/Craft-Studio",
+    "updated_at":  "2026-10-19T03:33:08Z",
+    "apps":  {
+                 "photocraft":  {
+                                    "name":  "PhotoCraft",
+                                    "version":  "0.10.0",
+                                    "asset":  "photocraft-0.9.0-windows-x64-portable.zip"
+                                },
+                 "vectorcraft":  {
+                                     "name":  "VectorCraft",
+                                     "version":  "0.13.1",
+                                     "asset":  "vectorcraft-0.12.0-windows-x64-portable.zip"
+                                 },
+                 "filmcraft":  {
+                                   "name":  "FilmCraft",
+                                   "version":  "0.9.0",
+                                   "asset":  "filmcraft-0.8.0-windows-x64-portable.zip"
+                               },
+                 "lightcraft":  {
+                                    "name":  "LightCraft",
+                                    "version":  "0.9.1",
+                                    "asset":  "lightcraft-0.8.0-windows-x64-portable.zip"
+                                },
+                 "pdfcraft":  {
+                                  "name":  "PdfCraft",
+                                  "version":  "0.9.0",
+                                  "asset":  "pdfcraft-0.8.0-windows-x64-portable.zip"
+                              },
+                 "effectcraft":  {
+                                     "name":  "EffectCraft",
+                                     "version":  "0.11.1",
+                                     "asset":  "effectcraft-0.10.0-windows-x64-portable.zip"
+                                 },
+                 "designcraft":  {
+                                     "name":  "DesignCraft",
+                                     "version":  "0.9.0",
+                                     "asset":  "designcraft-0.8.0-windows-x64-portable.zip"
+                                 },
+                 "wordcraft":  {
+                                   "name":  "WordCraft",
+                                   "version":  "0.8.0",
+                                   "asset":  "wordcraft-0.7.0-windows-x64-portable.zip"
+                               },
+                 "deckcraft":  {
+                                   "name":  "DeckCraft",
+                                   "version":  "0.8.0",
+                                   "asset":  "deckcraft-0.7.0-windows-x64-portable.zip"
+                               },
+                 "gridcraft":  {
+                                   "name":  "GridCraft",
+                                   "version":  "0.8.0",
+                                   "asset":  "gridcraft-0.7.0-windows-x64-portable.zip"
+                               },
+                 "cadcraft":  {
+                                  "name":  "CADCraft",
+                                  "version":  "0.8.0",
+                                  "asset":  "cadcraft-0.7.0-windows-x64-portable.zip"
+                              },
+                 "soundcraft":  {
+                                    "name":  "SoundCraft",
+                                    "version":  "0.8.0",
+                                    "asset":  "soundcraft-0.7.0-windows-x64-portable.zip"
+                                },
+                 "figcraft":  {
+                                  "name":  "FigCraft",
+                                  "version":  "0.7.0",
+                                  "asset":  "figcraft-0.6.0-windows-x64-portable.zip"
+                              },
+                 "hop":  {
+                             "name":  "HopCraft",
+                             "version":  "0.4.5",
+                             "asset":  "HOP-windows-x64.exe"
+                         }
+             }
 }

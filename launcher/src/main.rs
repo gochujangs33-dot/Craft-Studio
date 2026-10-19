@@ -2,6 +2,8 @@
 
 mod apps;
 mod ai_connect;
+mod companion;
+pub mod mcp_config_gen;
 mod theme;
 mod ui;
 mod updater;
