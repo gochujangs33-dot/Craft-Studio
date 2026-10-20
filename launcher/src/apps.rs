@@ -682,22 +682,23 @@ pub fn focus_process(_pids: &[u32]) -> bool {
     false
 }
 
-/// Returns the [left, top, right, bottom] screen rect of a running app window's client area.
-/// Matches either by child process PID or by top-level window title.
+/// Returns (HWND as isize, [left, top, right, bottom]) client area rect in screen coordinates.
+/// Matches by child process PID or top-level window title/executable heuristics.
 #[cfg(windows)]
 #[allow(unsafe_code)]
-pub fn get_app_window_rect(pids: &[u32], app_name: &str) -> Option<[f32; 4]> {
+pub fn get_app_window_info(pids: &[u32], app_name: &str) -> Option<(isize, [f32; 4])> {
     use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM, POINT, RECT};
     use windows_sys::Win32::Graphics::Gdi::ClientToScreen;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        EnumWindows, GetClientRect, GetWindowTextW, GetWindowThreadProcessId, IsIconic,
-        IsWindowVisible,
+        EnumWindows, GetClientRect, GetWindow, GetWindowTextW, GetWindowThreadProcessId, IsIconic,
+        IsWindowVisible, GW_OWNER,
     };
 
     struct Ctx {
         pids: Vec<u32>,
         name: String,
         best_area: i64,
+        found_hwnd: HWND,
         rect: Option<[f32; 4]>,
     }
 
@@ -707,11 +708,15 @@ pub fn get_app_window_rect(pids: &[u32], app_name: &str) -> Option<[f32; 4]> {
             return 1;
         }
 
+        // Only top-level un-owned windows
+        if !GetWindow(hwnd, GW_OWNER).is_null() {
+            return 1;
+        }
+
         let mut pid = 0u32;
         GetWindowThreadProcessId(hwnd, &mut pid);
 
-        let mut matched = !ctx.pids.is_empty() && ctx.pids.contains(&pid);
-        let mut buf = [0u16; 256];
+        let mut buf = [0u16; 512];
         let len = GetWindowTextW(hwnd, buf.as_mut_ptr(), buf.len() as i32);
         let title = if len > 0 {
             String::from_utf16_lossy(&buf[..len as usize])
@@ -719,9 +724,62 @@ pub fn get_app_window_rect(pids: &[u32], app_name: &str) -> Option<[f32; 4]> {
             String::new()
         };
 
-        if !matched && !ctx.name.is_empty() && !title.is_empty() {
-            if title.to_lowercase().contains(&ctx.name.to_lowercase()) {
+        let lower_title = title.to_lowercase();
+        // Ignore AI companion viewports or ArtCraft Studio launcher
+        if lower_title.ends_with(" ai")
+            || lower_title.contains("ai 도우미")
+            || lower_title.contains("artcraft studio")
+        {
+            return 1;
+        }
+
+        let mut matched = !ctx.pids.is_empty() && ctx.pids.contains(&pid);
+
+        if !matched && !ctx.name.is_empty() {
+            let lower_name = ctx.name.to_lowercase();
+            if !title.is_empty() && lower_title.contains(&lower_name) {
                 matched = true;
+            } else {
+                // Secondary heuristic for apps opened with file name as title
+                match lower_name.as_str() {
+                    "deckcraft" => {
+                        if lower_title.contains("deck")
+                            || lower_title.contains(".pptx")
+                            || lower_title.contains(".deckcraft")
+                            || lower_title.contains("슬라이드")
+                            || lower_title.contains("presentation")
+                        {
+                            matched = true;
+                        }
+                    }
+                    "photocraft" => {
+                        if lower_title.contains("photo")
+                            || lower_title.contains(".psd")
+                            || lower_title.contains(".png")
+                            || lower_title.contains(".jpg")
+                            || lower_title.contains("layer 0")
+                        {
+                            matched = true;
+                        }
+                    }
+                    "wordcraft" => {
+                        if lower_title.contains("word")
+                            || lower_title.contains(".docx")
+                            || lower_title.contains("문서")
+                        {
+                            matched = true;
+                        }
+                    }
+                    "gridcraft" => {
+                        if lower_title.contains("grid")
+                            || lower_title.contains(".xlsx")
+                            || lower_title.contains("sheet")
+                        {
+                            matched = true;
+                        }
+                    }
+                    _ => {}
+                }
             }
         }
 
@@ -735,6 +793,7 @@ pub fn get_app_window_rect(pids: &[u32], app_name: &str) -> Option<[f32; 4]> {
                     let area = (raw_w as i64) * (raw_h as i64);
                     if area > ctx.best_area {
                         ctx.best_area = area;
+                        ctx.found_hwnd = hwnd;
                         let mut pt = POINT { x: 0, y: 0 };
                         ClientToScreen(hwnd, &mut pt);
                         let left = pt.x as f32;
@@ -753,17 +812,198 @@ pub fn get_app_window_rect(pids: &[u32], app_name: &str) -> Option<[f32; 4]> {
         pids: pids.to_vec(),
         name: app_name.to_string(),
         best_area: 0,
+        found_hwnd: std::ptr::null_mut(),
         rect: None,
     };
     unsafe {
         EnumWindows(Some(cb), &mut ctx as *mut Ctx as LPARAM);
     }
-    ctx.rect
+    if !ctx.found_hwnd.is_null() && ctx.rect.is_some() {
+        Some((ctx.found_hwnd as isize, ctx.rect.unwrap()))
+    } else {
+        None
+    }
+}
+
+/// Returns the [left, top, right, bottom] screen rect of a running app window's client area.
+#[cfg(windows)]
+pub fn get_app_window_rect(pids: &[u32], app_name: &str) -> Option<[f32; 4]> {
+    get_app_window_info(pids, app_name).map(|(_, r)| r)
+}
+
+#[cfg(not(windows))]
+pub fn get_app_window_info(_pids: &[u32], _app_name: &str) -> Option<(isize, [f32; 4])> {
+    None
 }
 
 #[cfg(not(windows))]
 pub fn get_app_window_rect(_pids: &[u32], _app_name: &str) -> Option<[f32; 4]> {
     None
+}
+
+/// Checks if the target app window or companion is currently the foreground window
+#[cfg(windows)]
+pub fn is_app_or_companion_foreground(target_hwnd: isize, companion_title: &str, pids: &[u32]) -> bool {
+    use windows_sys::Win32::Foundation::HWND;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId,
+    };
+    unsafe {
+        let fg = GetForegroundWindow();
+        if fg.is_null() {
+            return false;
+        }
+        if fg == target_hwnd as HWND {
+            return true;
+        }
+        let mut fg_pid = 0u32;
+        GetWindowThreadProcessId(fg, &mut fg_pid);
+        if !pids.is_empty() && pids.contains(&fg_pid) {
+            return true;
+        }
+        let mut buf = [0u16; 256];
+        let len = GetWindowTextW(fg, buf.as_mut_ptr(), buf.len() as i32);
+        if len > 0 {
+            let title = String::from_utf16_lossy(&buf[..len as usize]);
+            if title == companion_title || title.contains("AI 도우미") {
+                return true;
+            }
+        }
+        false
+    }
+}
+
+#[cfg(not(windows))]
+pub fn is_app_or_companion_foreground(_target_hwnd: isize, _companion_title: &str, _pids: &[u32]) -> bool {
+    true
+}
+
+/// Checks if the given window is minimized (iconic)
+#[cfg(windows)]
+pub fn is_window_iconic(hwnd_val: isize) -> bool {
+    use windows_sys::Win32::Foundation::HWND;
+    use windows_sys::Win32::UI::WindowsAndMessaging::IsIconic;
+    unsafe {
+        if hwnd_val == 0 {
+            return true;
+        }
+        IsIconic(hwnd_val as HWND) != 0
+    }
+}
+
+#[cfg(not(windows))]
+pub fn is_window_iconic(_hwnd_val: isize) -> bool {
+    false
+}
+
+/// Links the companion window to the target app as an owned window (GWLP_HWNDPARENT)
+#[cfg(windows)]
+pub fn set_companion_owner(companion_title: &str, target_hwnd_val: isize) {
+    use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GetWindowLongPtrW, GetWindowTextW, SetWindowLongPtrW, GWLP_HWNDPARENT,
+    };
+
+    struct FindCtx {
+        title: String,
+        found: HWND,
+    }
+
+    unsafe extern "system" fn enum_cb(hwnd: HWND, lp: LPARAM) -> BOOL {
+        let ctx = &mut *(lp as *mut FindCtx);
+        let mut buf = [0u16; 256];
+        let len = GetWindowTextW(hwnd, buf.as_mut_ptr(), buf.len() as i32);
+        if len > 0 {
+            let title = String::from_utf16_lossy(&buf[..len as usize]);
+            if title == ctx.title {
+                ctx.found = hwnd;
+                return 0; // stop
+            }
+        }
+        1
+    }
+
+    let mut ctx = FindCtx {
+        title: companion_title.to_string(),
+        found: std::ptr::null_mut(),
+    };
+    unsafe {
+        EnumWindows(Some(enum_cb), &mut ctx as *mut FindCtx as LPARAM);
+        if !ctx.found.is_null() && target_hwnd_val != 0 {
+            let target_hwnd = target_hwnd_val as HWND;
+            let current = GetWindowLongPtrW(ctx.found, GWLP_HWNDPARENT);
+            if current != target_hwnd as isize {
+                SetWindowLongPtrW(ctx.found, GWLP_HWNDPARENT, target_hwnd as isize);
+            }
+        }
+    }
+}
+
+#[cfg(not(windows))]
+pub fn set_companion_owner(_companion_title: &str, _target_hwnd_val: isize) {}
+
+/// Detects if the target app has an open right-side panel (e.g. DeckCraft's Format Shape, PhotoCraft's right panel).
+/// PhotoCraft always has a right panel.
+/// DeckCraft is detected via Win32 GetPixel inspection near (right - 150, top + 140) and border at (right - 288).
+#[cfg(windows)]
+pub fn detect_side_menu_open(target_hwnd_val: isize, rect: [f32; 4], ppp: f32, app_id: &str) -> bool {
+    let lower_id = app_id.to_lowercase();
+    if lower_id == "photocraft" {
+        return true;
+    }
+
+    unsafe {
+        use windows_sys::Win32::Foundation::HWND;
+        use windows_sys::Win32::Graphics::Gdi::{GetDC, GetPixel, ReleaseDC};
+
+        let hwnd = if target_hwnd_val != 0 {
+            target_hwnd_val as HWND
+        } else {
+            std::ptr::null_mut()
+        };
+        let hdc = GetDC(hwnd);
+        if hdc.is_null() {
+            return false;
+        }
+
+        // Relative client sampling coordinates
+        let client_w = (rect[2] - rect[0]) as i32;
+        let x_in = client_w - (150.0 * ppp) as i32;
+        let x_out = client_w - (310.0 * ppp) as i32;
+        let y_samples = [
+            (140.0 * ppp) as i32,
+            (200.0 * ppp) as i32,
+            (260.0 * ppp) as i32,
+        ];
+
+        let mut diff_count = 0;
+        for &y in &y_samples {
+            let col_in = GetPixel(hdc, x_in, y);
+            let col_out = GetPixel(hdc, x_out, y);
+            if col_in != 0xFFFFFFFF && col_out != 0xFFFFFFFF {
+                let r_in = (col_in & 0xFF) as i32;
+                let g_in = ((col_in >> 8) & 0xFF) as i32;
+                let b_in = ((col_in >> 16) & 0xFF) as i32;
+
+                let r_out = (col_out & 0xFF) as i32;
+                let g_out = ((col_out >> 8) & 0xFF) as i32;
+                let b_out = ((col_out >> 16) & 0xFF) as i32;
+
+                let dist = (r_in - r_out).abs() + (g_in - g_out).abs() + (b_in - b_out).abs();
+                if dist > 20 {
+                    diff_count += 1;
+                }
+            }
+        }
+
+        ReleaseDC(hwnd, hdc);
+        diff_count >= 2
+    }
+}
+
+#[cfg(not(windows))]
+pub fn detect_side_menu_open(_target_hwnd_val: isize, _rect: [f32; 4], _ppp: f32, app_id: &str) -> bool {
+    app_id.eq_ignore_ascii_case("photocraft")
 }
 
 // ---------------------------------------------------------------- state & logging
@@ -863,6 +1103,10 @@ impl State {
 
 pub fn now_secs() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+}
+
+pub fn now_millis() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
 
 pub fn log_path() -> PathBuf {

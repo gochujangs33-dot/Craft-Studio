@@ -165,8 +165,12 @@ pub struct CompanionState {
     pub api_key: String,
     pub provider: AiProvider,
     pub status_msg: Option<String>,
+    #[allow(dead_code)]
     pub v_was_down: bool,
     pub last_dock_pos: Option<[f32; 2]>,
+    pub last_dock_size: Option<[f32; 2]>,
+    pub side_menu_detected: bool,
+    pub last_side_menu_check: u64,
     resp_sender: Sender<AsyncResponse>,
     resp_receiver: Receiver<AsyncResponse>,
 }
@@ -228,6 +232,9 @@ impl CompanionState {
             status_msg: None,
             v_was_down: false,
             last_dock_pos: None,
+            last_dock_size: None,
+            side_menu_detected: false,
+            last_side_menu_check: 0,
             resp_sender: tx,
             resp_receiver: rx,
         }
@@ -629,35 +636,6 @@ impl CompanionState {
             *open_action = Some((app_id, file));
         }
 
-        // 1. Hardware-level Win32 Async Keystate check for Ctrl+V
-        #[cfg(windows)]
-        {
-            unsafe {
-                use windows_sys::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
-                let ctrl_down = (GetAsyncKeyState(0x11 /* VK_CONTROL */) as u16 & 0x8000) != 0;
-                let v_down = (GetAsyncKeyState(0x56 /* 'V' */) as u16 & 0x8000) != 0;
-                if ctrl_down && v_down {
-                    if !self.v_was_down {
-                        self.v_was_down = true;
-                        self.try_paste_image(ctx, temp_dir);
-                    }
-                } else if !v_down {
-                    self.v_was_down = false;
-                }
-            }
-        }
-
-        // 2. Egui paste event
-        let is_paste = ctx.input(|i| {
-            let ctrl = i.modifiers.ctrl || i.modifiers.command;
-            let v = i.key_pressed(Key::V) || i.keys_down.contains(&Key::V);
-            let evt_paste = i.events.iter().any(|e| matches!(e, egui::Event::Paste(_)));
-            (ctrl && v) || evt_paste
-        });
-        if is_paste {
-            self.try_paste_image(ctx, temp_dir);
-        }
-
         // Handle dropped image files
         let dropped = ctx.input(|i| i.raw.dropped_files.clone());
         for df in dropped {
@@ -677,7 +655,7 @@ impl CompanionState {
         }
     }
 
-    /// Renders the AI companion docked at the bottom-right of the screen for a specific app
+    /// Renders the AI companion docked at the right side panel of the screen for a specific app
     pub fn render_for_app(
         &mut self,
         ctx: &egui::Context,
@@ -699,42 +677,70 @@ impl CompanionState {
 
         let vp_id = ViewportId::from_hash_of(format!("companion_dock_{app_id}"));
 
-        // Match PhotoCraft's right panel column width (289px) and sit directly under '레이어, 채널, 패스'
-        let width = 289.0_f32;
-        let height = 284.0_f32;
-
+        // Match DeckCraft Format Shape & PhotoCraft right panel column width (288px)
+        let width = 288.0_f32;
         let ppp = ctx.pixels_per_point().max(0.1);
-        let app_rect = crate::apps::get_app_window_rect(pids, app_name);
-        let (x, y, is_visible) = if let Some([_left, top, right, bottom]) = app_rect {
-            let right_pt = right / ppp;
-            let bottom_pt = bottom / ppp;
-            let top_pt = top / ppp;
-            let x = right_pt - width;
-            let y = (bottom_pt - height).max(top_pt + 50.0_f32);
-            (x, y, true)
-        } else if !cfg!(windows) {
-            let (w, h) = ctx.input(|i| i.viewport().monitor_size).map(|s| (s.x, s.y)).unwrap_or((1920.0, 1080.0));
-            let x = (w - width - 20.0_f32).max(10.0_f32);
-            let y = (h - height - 60.0_f32).max(10.0_f32);
-            (x, y, true)
-        } else {
-            (100.0_f32, 100.0_f32, false)
+
+        let app_info = crate::apps::get_app_window_info(pids, app_name);
+        let (target_hwnd, app_rect) = match app_info {
+            Some((hwnd, rect)) => (hwnd, rect),
+            None => {
+                ctx.send_viewport_cmd_to(vp_id, egui::ViewportCommand::Visible(false));
+                return;
+            }
         };
 
-        if !is_visible {
+        // Window Synchronization: Only show when target app or companion is active and not minimized
+        let companion_title = format!("{app_name} AI");
+        let is_minimized = crate::apps::is_window_iconic(target_hwnd);
+        let is_foreground = crate::apps::is_app_or_companion_foreground(target_hwnd, &companion_title, pids);
+
+        if is_minimized || !is_foreground {
             ctx.send_viewport_cmd_to(vp_id, egui::ViewportCommand::Visible(false));
             return;
         }
 
+        // Real-time detection of right side menu (Format Shape, PhotoCraft panels)
+        let now_ms = crate::apps::now_millis();
+        if now_ms.saturating_sub(self.last_side_menu_check) >= 80 {
+            self.last_side_menu_check = now_ms;
+            self.side_menu_detected = crate::apps::detect_side_menu_open(target_hwnd, app_rect, ppp, app_id);
+        }
+
+        let right_pt = app_rect[2] / ppp;
+        let top_pt = app_rect[1] / ppp;
+        let bottom_pt = app_rect[3] / ppp;
+
+        // Strictly dock to the right edge of the target application window
+        let x = right_pt - width;
+
+        let (y, height) = if !self.side_menu_detected {
+            // (a) [기본 상태 - 우측 사이드 메뉴가 없을 때]:
+            // 상단 리본 툴바 바로 아래(top + 118px)부터 하단 상태바 바로 위(bottom - 26px)까지
+            // 우측 사이드 영역 전체 높이(Full-Height)로 길게 표시
+            let start_y = top_pt + 118.0_f32;
+            let end_y = bottom_pt - 26.0_f32;
+            let h = (end_y - start_y).max(180.0_f32);
+            (start_y, h)
+        } else {
+            // (b) [객체/텍스트 선택 상태 - 우측 사이드 메뉴(Format Shape 등)가 열렸을 때]:
+            // 상단의 Format Shape 옵션들(Fill, Line 등)을 절대 가리지 않도록,
+            // AI 도우미의 높이를 하단 영역(하단 340px)으로 자동 축소하여 우측 사이드 메뉴 하단 빈 공간에 배치
+            let compact_h = 340.0_f32;
+            let max_h = (bottom_pt - 26.0_f32) - (top_pt + 118.0_f32);
+            let h = compact_h.min(max_h).max(180.0_f32);
+            let start_y = (bottom_pt - 26.0_f32) - h;
+            (start_y, h)
+        };
+
         ctx.request_repaint_after(std::time::Duration::from_millis(32));
 
         let builder = ViewportBuilder::default()
-            .with_title(format!("{app_name} AI"))
+            .with_title(companion_title.clone())
             .with_inner_size([width, height])
-            .with_min_inner_size([width, height])
-            .with_max_inner_size([width, height])
+            .with_min_inner_size([width, 150.0_f32])
+            .with_max_inner_size([width, 3000.0_f32])
             .with_resizable(false)
-            .with_always_on_top()
             .with_visible(true)
             .with_decorations(false)
             .with_transparent(false)
@@ -745,36 +751,14 @@ impl CompanionState {
                 ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(x, y)));
                 self.last_dock_pos = Some([x, y]);
             }
+            if self.last_dock_size != Some([width, height]) {
+                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(width, height)));
+                self.last_dock_size = Some([width, height]);
+            }
             ctx.request_repaint_after(std::time::Duration::from_millis(32));
 
-            // 1. Hardware-level Win32 Async Keystate check for Ctrl+V (works across active windows!)
-            #[cfg(windows)]
-            {
-                unsafe {
-                    use windows_sys::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
-                    let ctrl_down = (GetAsyncKeyState(0x11 /* VK_CONTROL */) as u16 & 0x8000) != 0;
-                    let v_down = (GetAsyncKeyState(0x56 /* 'V' */) as u16 & 0x8000) != 0;
-                    if ctrl_down && v_down {
-                        if !self.v_was_down {
-                            self.v_was_down = true;
-                            self.try_paste_image(ctx, temp_dir);
-                        }
-                    } else if !v_down {
-                        self.v_was_down = false;
-                    }
-                }
-            }
-
-            // 2. Egui paste event fallback
-            let is_paste = ctx.input(|i| {
-                let ctrl = i.modifiers.ctrl || i.modifiers.command;
-                let v = i.key_pressed(Key::V) || i.keys_down.contains(&Key::V);
-                let evt_paste = i.events.iter().any(|e| matches!(e, egui::Event::Paste(_)));
-                (ctrl && v) || evt_paste
-            });
-            if is_paste {
-                self.try_paste_image(ctx, temp_dir);
-            }
+            // Link AI companion as an owned window of target app
+            crate::apps::set_companion_owner(&companion_title, target_hwnd);
 
             // Handle dropped image files
             let dropped = ctx.input(|i| i.raw.dropped_files.clone());
