@@ -81,6 +81,7 @@ pub struct Launcher {
     companions: HashMap<String, crate::companion::CompanionState>,
     pub active_companion_app: String,
     pub embedded_ai_open: bool,
+    manual_check_requested: bool,
 }
 
 fn load_texture(ctx: &egui::Context, name: &str, bytes: &[u8], max_w: Option<u32>) -> Option<TextureHandle> {
@@ -156,6 +157,7 @@ impl Launcher {
             companions,
             active_companion_app: "photocraft".to_string(),
             embedded_ai_open: true,
+            manual_check_requested: false,
         };
 
         // 3M-style Startup Auto-Check: automatically match versions from GitHub on launch
@@ -415,6 +417,7 @@ impl Launcher {
                 self.toast(msg, MUTED);
             }
             Action::CheckUpdates => {
+                self.manual_check_requested = true;
                 let repos: Vec<(String, String)> =
                     self.entries.iter().map(|e| (e.meta.id.clone(), e.meta.repo.clone())).collect();
                 self.updater.check_all_updates(repos);
@@ -2077,9 +2080,16 @@ impl Launcher {
 
 impl eframe::App for Launcher {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if self.updater.is_checking {
+            ctx.request_repaint_after(Duration::from_millis(100));
+        }
+
         // Poll background updater events
         for (app_id, success, msg) in self.updater.poll_events() {
             if app_id == "__check_all__" {
+                let was_manual = self.manual_check_requested;
+                self.manual_check_requested = false;
+
                 // Dynamically reload synced registry so new cards added on GitHub appear immediately!
                 self.registry = apps::load_registry(&self.exe_dir);
                 self.entries = apps::scan(&self.registry, &self.apps_dir, &self.exe_dir, &self.saves_dir);
@@ -2093,6 +2103,22 @@ impl eframe::App for Launcher {
                         format!("💡 {count} update(s) detected! Check [🔄 UPDATE].")
                     };
                     self.toast(alert, Color32::from_rgb(0xF5, 0xC0, 0x40));
+                } else if was_manual {
+                    if success {
+                        let ok_msg = if self.is_ko() {
+                            "✔ 모든 프로그램이 최신 버전입니다. (확인 완료)"
+                        } else {
+                            "✔ All programs are completely up to date. (Verified)"
+                        };
+                        self.toast(ok_msg, OK);
+                    } else {
+                        let err_msg = if self.is_ko() {
+                            "⚠ 최신 버전 정보를 확인하지 못했습니다. 네트워크 연결을 확인해주세요."
+                        } else {
+                            "⚠ Failed to fetch version info. Please check your network connection."
+                        };
+                        self.toast(err_msg, ERR);
+                    }
                 }
             } else {
                 let color = if success { OK } else { ERR };

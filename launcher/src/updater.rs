@@ -213,17 +213,20 @@ impl UpdateManager {
                  function Fetch-Json([string]$url) {{ \
                      $tmp = Join-Path $env:TEMP ('artcraft_chk_' + [System.Guid]::NewGuid().ToString('N') + '.json'); \
                      try {{ \
-                         & curl.exe -k -L -s --max-time 6 -A ArtCraftStudio $url -o $tmp; \
+                         & curl.exe -k -L -s --max-time 5 -A ArtCraftStudio $url -o $tmp; \
                          if ($LASTEXITCODE -eq 0 -and (Test-Path $tmp)) {{ \
                              $raw = Get-Content $tmp -Raw -Encoding UTF8 -ErrorAction SilentlyContinue; \
-                             if ($raw -and ($raw.Trim().StartsWith('{{') -or $raw.Trim().StartsWith('['))) {{ \
-                                 $obj = $raw | ConvertFrom-Json -ErrorAction SilentlyContinue; \
-                                 if ($obj) {{ Remove-Item $tmp -Force -ErrorAction SilentlyContinue; return $obj }} \
+                             if ($raw) {{ \
+                                 $raw = $raw.Trim().Trim([char]0xFEFF); \
+                                 if ($raw.StartsWith('{{') -or $raw.StartsWith('[')) {{ \
+                                     $obj = $raw | ConvertFrom-Json -ErrorAction SilentlyContinue; \
+                                     if ($obj) {{ Remove-Item $tmp -Force -ErrorAction SilentlyContinue; return $obj }} \
+                                 }} \
                              }} \
                          }} \
                      }} catch {{}} \
                      finally {{ if (Test-Path $tmp) {{ Remove-Item $tmp -Force -ErrorAction SilentlyContinue }} }} \
-                     try {{ return (Invoke-RestMethod $url -Headers @{{ 'User-Agent' = 'ArtCraftStudio' }} -TimeoutSec 6) }} catch {{ return $null }} \
+                     try {{ return (Invoke-RestMethod $url -Headers @{{ 'User-Agent' = 'ArtCraftStudio' }} -TimeoutSec 4) }} catch {{ return $null }} \
                  }} \
                  \
                  # Tier 0: Sync remote registry.json so new cards appear automatically \
@@ -240,13 +243,15 @@ impl UpdateManager {
                      }} \
                  }} \
                  \
-                 # Tier 2: Check GitHub Releases latest assets \
-                 $rel = Fetch-Json 'https://api.github.com/repos/{suite_repo}/releases/latest'; \
-                 if ($rel -and $rel.assets) {{ \
-                     foreach ($a in $rel.assets) {{ \
-                         if ($a.name -match '^([a-z0-9]+)-([0-9\\.]+)') {{ \
-                             $id = $matches[1]; $ver = $matches[2]; \
-                             $results[$id] = $ver; \
+                 # Tier 2: Check GitHub Releases latest assets if version.json yielded few results \
+                 if ($results.Keys.Count -lt 5) {{ \
+                     $rel = Fetch-Json 'https://api.github.com/repos/{suite_repo}/releases/latest'; \
+                     if ($rel -and $rel.assets) {{ \
+                         foreach ($a in $rel.assets) {{ \
+                             if ($a.name -match '^([a-z0-9]+)-([0-9\\.]+)') {{ \
+                                 $id = $matches[1]; $ver = $matches[2]; \
+                                 $results[$id] = $ver; \
+                             }} \
                          }} \
                      }} \
                  }} \
@@ -312,7 +317,8 @@ impl UpdateManager {
                 }
             }
 
-            let _ = tx.send(("__check_all__".to_string(), true, format!("{found}개 프로그램 최신 정보 매칭 완료")));
+            let success = found > 0;
+            let _ = tx.send(("__check_all__".to_string(), success, format!("{found}개 프로그램 최신 정보 매칭 완료")));
         });
     }
 
