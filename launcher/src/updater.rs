@@ -21,6 +21,23 @@ fn silent_command(program: &str) -> Command {
     cmd
 }
 
+/// Fetches response body from a URL using curl, automatically stripping UTF-8 BOM
+fn fetch_url_string(url: &str) -> Option<String> {
+    let prog = if cfg!(windows) { "curl.exe" } else { "curl" };
+    let output = silent_command(prog)
+        .args(["-k", "-L", "-s", "--max-time", "6", "-A", "ArtCraftStudio", url])
+        .output()
+        .ok()?;
+    if output.status.success() {
+        let text = String::from_utf8_lossy(&output.stdout).to_string();
+        let cleaned = text.trim_start_matches('\u{feff}').trim().to_string();
+        if !cleaned.is_empty() {
+            return Some(cleaned);
+        }
+    }
+    None
+}
+
 pub const UPDATE_SCRIPT_PS1: &str = include_str!("../../scripts/update-app.ps1");
 #[allow(dead_code)]
 pub const UPDATE_SCRIPT_SH: &str = include_str!("../../scripts/update-app.sh");
@@ -199,118 +216,69 @@ impl UpdateManager {
             let mut found = 0;
             let suite_repo = "gochujangs33-dot/Craft-Studio";
             let user_reg = crate::apps::get_user_registry_path(&exe_dir);
-            let user_reg_str = user_reg.display().to_string();
 
-            #[cfg(windows)]
-            {
-                // Multi-tier fast version matching (registry.json + version.json + releases + upstream) with TLS & proxy bypass
-                let ps_script = format!(
-                "$ProgressPreference = 'SilentlyContinue'; \
-                 [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12; \
-                 try {{ [System.Net.ServicePointManager]::ServerCertificateValidationCallback = {{ $true }} }} catch {{}}; \
-                 $results = @{{}}; \
-                 \
-                 function Fetch-Json([string]$url) {{ \
-                     $tmp = Join-Path $env:TEMP ('artcraft_chk_' + [System.Guid]::NewGuid().ToString('N') + '.json'); \
-                     try {{ \
-                         & curl.exe -k -L -s --max-time 5 -A ArtCraftStudio $url -o $tmp; \
-                         if ($LASTEXITCODE -eq 0 -and (Test-Path $tmp)) {{ \
-                             $raw = Get-Content $tmp -Raw -Encoding UTF8 -ErrorAction SilentlyContinue; \
-                             if ($raw) {{ \
-                                 $raw = $raw.Trim().Trim([char]0xFEFF); \
-                                 if ($raw.StartsWith('{{') -or $raw.StartsWith('[')) {{ \
-                                     $obj = $raw | ConvertFrom-Json -ErrorAction SilentlyContinue; \
-                                     if ($obj) {{ Remove-Item $tmp -Force -ErrorAction SilentlyContinue; return $obj }} \
-                                 }} \
-                             }} \
-                         }} \
-                     }} catch {{}} \
-                     finally {{ if (Test-Path $tmp) {{ Remove-Item $tmp -Force -ErrorAction SilentlyContinue }} }} \
-                     try {{ return (Invoke-RestMethod $url -Headers @{{ 'User-Agent' = 'ArtCraftStudio' }} -TimeoutSec 4) }} catch {{ return $null }} \
-                 }} \
-                 \
-                 # Tier 0: Sync remote registry.json so new cards appear automatically \
-                 $rjson = Fetch-Json 'https://raw.githubusercontent.com/{suite_repo}/main/registry.json'; \
-                 if ($rjson -and $rjson.apps) {{ \
-                     Set-Content -Path '{user_reg_str}' -Value (ConvertTo-Json $rjson -Depth 10) -Encoding UTF8 -ErrorAction SilentlyContinue; \
-                 }} \
-                 \
-                 # Tier 1: Check remote version.json manifest \
-                 $vjson = Fetch-Json 'https://raw.githubusercontent.com/{suite_repo}/main/version.json'; \
-                 if ($vjson -and $vjson.apps) {{ \
-                     foreach ($prop in $vjson.apps.PSObject.Properties) {{ \
-                         if ($prop.Value.version) {{ $results[$prop.Name] = $prop.Value.version -replace '^v','' }} \
-                     }} \
-                 }} \
-                 \
-                 # Tier 2: Check GitHub Releases latest assets if version.json yielded few results \
-                 if ($results.Keys.Count -lt 5) {{ \
-                     $rel = Fetch-Json 'https://api.github.com/repos/{suite_repo}/releases/latest'; \
-                     if ($rel -and $rel.assets) {{ \
-                         foreach ($a in $rel.assets) {{ \
-                             if ($a.name -match '^([a-z0-9]+)-([0-9\\.]+)') {{ \
-                                 $id = $matches[1]; $ver = $matches[2]; \
-                                 $results[$id] = $ver; \
-                             }} \
-                         }} \
-                     }} \
-                 }} \
-                 \
-                 # Output gathered versions as id=ver lines \
-                 foreach ($k in $results.Keys) {{ \"$k=$($results[$k])\" }}"
-            );
-
-
-
-                let output = silent_command("powershell")
-                    .args(["-NoProfile", "-NonInteractive", "-Command", &ps_script])
-                    .output()
-                    .ok()
-                    .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
-                    .unwrap_or_default();
-
-                let mut gathered = HashMap::new();
-                for line in output.lines() {
-                    if let Some((k, v)) = line.trim().split_once('=') {
-                        if !k.is_empty() && !v.is_empty() {
-                            gathered.insert(k.to_string(), v.to_string());
-                        }
+            // Tier 0: Sync remote registry.json so new cards appear automatically
+            let reg_url = format!("https://raw.githubusercontent.com/{suite_repo}/main/registry.json");
+            if let Some(reg_json) = fetch_url_string(&reg_url) {
+                if reg_json.starts_with('{') {
+                    if let Some(parent) = user_reg.parent() {
+                        let _ = std::fs::create_dir_all(parent);
                     }
+                    let _ = std::fs::write(&user_reg, reg_json);
                 }
+            }
 
-                if let Ok(mut map) = latest_store.lock() {
-                    for (id, ver) in &gathered {
-                        if let Some(existing) = map.get(id) {
-                            if is_newer(ver, existing) {
-                                map.insert(id.clone(), ver.clone());
+            // Tier 1: Check remote version.json manifest
+            let ver_url = format!("https://raw.githubusercontent.com/{suite_repo}/main/version.json");
+            if let Some(ver_json) = fetch_url_string(&ver_url) {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&ver_json) {
+                    if let Some(apps) = v.get("apps").and_then(|a| a.as_object()) {
+                        if let Ok(mut map) = latest_store.lock() {
+                            for (id, val) in apps {
+                                if let Some(ver) = val.get("version").and_then(|v| v.as_str()) {
+                                    let clean_ver = ver.trim_start_matches('v').to_string();
+                                    if let Some(existing) = map.get(id) {
+                                        if is_newer(&clean_ver, existing) {
+                                            map.insert(id.clone(), clean_ver);
+                                        }
+                                    } else {
+                                        map.insert(id.clone(), clean_ver);
+                                    }
+                                    found += 1;
+                                }
                             }
-                        } else {
-                            map.insert(id.clone(), ver.clone());
                         }
-                        found += 1;
                     }
                 }
             }
 
-            #[cfg(not(windows))]
-            {
-                let sh_script = format!(
-                    "curl -sL --max-time 8 https://raw.githubusercontent.com/{suite_repo}/main/registry.json -o '{user_reg_str}' 2>/dev/null || true; \
-                     curl -sL --max-time 8 https://raw.githubusercontent.com/{suite_repo}/main/version.json 2>/dev/null || true"
-                );
-                let output = silent_command("sh")
-                    .args(["-c", &sh_script])
-                    .output()
-                    .ok()
-                    .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
-                    .unwrap_or_default();
-
-                if let Ok(v) = serde_json::from_str::<HashMap<String, serde_json::Value>>(&output) {
-                    if let Ok(mut map) = latest_store.lock() {
-                        for (k, val) in v {
-                            if let Some(s) = val.as_str() {
-                                map.insert(k, s.to_string());
-                                found += 1;
+            // Tier 2: Check GitHub Releases latest assets if version.json yielded few results
+            if found < 5 {
+                let rel_url = format!("https://api.github.com/repos/{suite_repo}/releases/latest");
+                if let Some(rel_json) = fetch_url_string(&rel_url) {
+                    if let Ok(rel) = serde_json::from_str::<serde_json::Value>(&rel_json) {
+                        if let Some(assets) = rel.get("assets").and_then(|a| a.as_array()) {
+                            if let Ok(mut map) = latest_store.lock() {
+                                for a in assets {
+                                    if let Some(name) = a.get("name").and_then(|n| n.as_str()) {
+                                        let lower = name.to_lowercase();
+                                        let parts: Vec<&str> = lower.split('-').collect();
+                                        if parts.len() >= 2 {
+                                            let id = parts[0].to_string();
+                                            let ver = parts[1].trim_start_matches('v').to_string();
+                                            if ver.chars().next().map_or(false, |c| c.is_ascii_digit()) {
+                                                if let Some(existing) = map.get(&id) {
+                                                    if is_newer(&ver, existing) {
+                                                        map.insert(id, ver);
+                                                    }
+                                                } else {
+                                                    map.insert(id, ver);
+                                                }
+                                                found += 1;
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
