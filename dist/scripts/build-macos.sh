@@ -145,15 +145,12 @@ xattr -cr "${APP_BUNDLE}" 2>/dev/null || true
 mkdir -p "${RELEASE_DIR}"
 echo "==> Creating macOS Apple Silicon distribution packages..."
 
-# Create ZIP archive
+# Create ZIP archive (ArtCraftStudio.app already includes all resources inside Contents/Resources/)
 cd "${DIST_DIR}"
 ZIP_ITEMS=("ArtCraftStudio.app")
 [ -f "registry.json" ] && ZIP_ITEMS+=("registry.json")
 [ -f "version.json" ] && ZIP_ITEMS+=("version.json")
 [ -f "AI_연동_가이드.txt" ] && ZIP_ITEMS+=("AI_연동_가이드.txt")
-[ -d "apps" ] && ZIP_ITEMS+=("apps")
-[ -d "custom_apps" ] && ZIP_ITEMS+=("custom_apps")
-[ -d "SavedFiles" ] && ZIP_ITEMS+=("SavedFiles")
 
 zip -r -q "${RELEASE_DIR}/ArtCraftStudio-macos-arm64.zip" "${ZIP_ITEMS[@]}"
 cp -f "${RELEASE_DIR}/ArtCraftStudio-macos-arm64.zip" "${RELEASE_DIR}/ArtCraftStudio-macos-universal.zip" 2>/dev/null || true
