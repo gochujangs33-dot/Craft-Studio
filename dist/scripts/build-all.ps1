@@ -17,7 +17,16 @@ try {
 } finally { Pop-Location }
 
 $dist = Join-Path $root "dist"
-Copy-Item (Join-Path $root "launcher\target\release\ArtCraftStudio.exe") $dist -Force
+$targetExe = Join-Path $dist "ArtCraftStudio.exe"
+$srcExe = Join-Path $root "launcher\target\release\ArtCraftStudio.exe"
+try {
+    Copy-Item $srcExe $dist -Force
+} catch {
+    $oldExe = Join-Path $dist "ArtCraftStudio.exe.old"
+    if (Test-Path $oldExe) { Remove-Item $oldExe -Force -ErrorAction SilentlyContinue }
+    Move-Item $targetExe $oldExe -Force
+    Copy-Item $srcExe $dist -Force
+}
 
 # License notices (Apache-2.0 requires shipping the license + NOTICE files)
 $lic = Join-Path $dist "LICENSES"
@@ -28,7 +37,23 @@ Get-ChildItem (Join-Path $dist "apps") -Directory | ForEach-Object {
 }
 $distScripts = Join-Path $dist "scripts"
 New-Item -ItemType Directory -Force $distScripts | Out-Null
-Copy-Item (Join-Path $root "scripts\update-app.ps1") $distScripts -Force
+Get-ChildItem (Join-Path $root "scripts") -File | ForEach-Object {
+    Copy-Item $_.FullName $distScripts -Force
+}
 Copy-Item (Join-Path $root "registry.json") $dist -Force
+Copy-Item (Join-Path $root "version.json") $dist -Force
+
+# Ensure SavedFiles folders exist for all registered apps
+$reg = Get-Content (Join-Path $root "registry.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+$distSaves = Join-Path $dist "SavedFiles"
+New-Item -ItemType Directory -Force $distSaves | Out-Null
+foreach ($app in $reg.apps) {
+    $folderName = $app.prefix + "Craft"
+    if ($app.id -eq "hop") { $folderName = "HopCraft" }
+    New-Item -ItemType Directory -Force (Join-Path $distSaves $folderName) | Out-Null
+}
+
+$oldExe = Join-Path $dist "ArtCraftStudio.exe.old"
+if (Test-Path $oldExe) { Remove-Item $oldExe -Force -ErrorAction SilentlyContinue }
 
 Write-Host "Bundle ready: $dist\ArtCraftStudio.exe"

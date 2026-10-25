@@ -21,6 +21,7 @@
 .mcp.json*
 launcher/.mcp.json*
 .upstream_status.json
+script.json
 
 # Windows / OS metadata
 Thumbs.db

@@ -61,6 +61,9 @@ pub fn get_bridge_args(id: &str, port: u16, token: &str, saves_dir: Option<&Path
         "cadcraft" => {
             vec!["mcp".to_string(), "--connect".to_string(), host_port]
         }
+        "solidcraft" => {
+            vec!["mcp".to_string(), "--connect".to_string(), host_port]
+        }
         "soundcraft" => {
             vec!["mcp".to_string(), "--connect".to_string(), port_str]
         }

@@ -191,10 +191,27 @@
       "mcp_args": ["mcp"]
     },
     {
+      "id": "solidcraft",
+      "prefix": "Solid",
+      "group": "new",
+      "order": 12,
+      "tagline": "Parametric 3D CAD modeling",
+      "tagline_ko": "파라메트릭 3D CAD 및 솔리드 모델링",
+      "desc_ko": "SolidWorks 및 Fusion 360 대체 프로그램입니다.\n• 순수 Rust 기반 파라메트릭 솔리드 모델링 및 구속조건 스케치\n• 익스트루전, 회전, 필렛 및 타임라인 기반 히스토리 모델링\n• STEP, STL, OBJ 등 다양한 3D CAD 파일 입출력 및 AI 자동화(MCP) 지원",
+      "desc_en": "Open-source parametric 3D CAD replacement for SolidWorks® and Fusion 360®.\n• Pure Rust B-rep parametric modeling and constraint solver\n• Extrude, revolve, fillet, assembly instancing & timeline feature tree\n• STEP, STL, OBJ export and AI agent automation via Model Context Protocol (MCP)",
+      "like": "Like SolidWorks® / Fusion 360®",
+      "like_ko": "SolidWorks® / Fusion 360® 대체",
+      "accent": "#009688",
+      "repo": "https://github.com/tangency-labs/solidcraft",
+      "website": "https://solidcraft.io",
+      "extensions": ["solidcraft", "step", "stp", "stl", "obj"],
+      "mcp_args": ["mcp"]
+    },
+    {
       "id": "soundcraft",
       "prefix": "Sound",
       "group": "new",
-      "order": 12,
+      "order": 13,
       "tagline": "Recording, editing and mixing audio",
       "tagline_ko": "멀티트랙 오디오 녹음, 사운드 편집 및 믹싱",
       "desc_ko": "Avid Pro Tools 대체 프로그램입니다.\n• 마이크 녹음, 팟캐스트, 음악 보컬 및 악기 멀티트랙 녹음\n• 오디오 파형 정밀 컷팅, 노이즈 제거, 이퀄라이저(EQ), 리버브\n• WAV, MP3, FLAC 무손실 오디오 렌더링 및 믹싱",
@@ -211,7 +228,7 @@
       "id": "figcraft",
       "prefix": "Fig",
       "group": "new",
-      "order": 13,
+      "order": 14,
       "tagline": "Interface design and prototyping",
       "tagline_ko": "UI/UX 인터페이스 디자인 및 프로토타이핑",
       "desc_ko": "Figma 대체 프로그램입니다.\n• 웹사이트, 모바일 앱 화면 디자인 및 와이어프레임 설계\n• 오토 레이아웃, 컴포넌트 재사용, 반응형 화면 프레임\n• 화면 간 인터랙션 연결 및 클릭 가능한 프로토타입 시연",
@@ -228,7 +245,7 @@
       "id": "hop",
       "prefix": "Hop",
       "group": "new",
-      "order": 14,
+      "order": 15,
       "tagline": "Open HWP/HWPX document editor and viewer",
       "tagline_ko": "HWP/HWPX 한글 문서 열람, 편집 및 PDF 변환",
       "desc_ko": "한컴오피스 한글(HWP/HWPX) 오픈소스 무료 대체 프로그램 HopCraft(HOP)입니다.\n• 한컴오피스 설치 없이 HWP 및 최신 HWPX 문서 열람/편집 지원\n• rhwp Rust 파싱 엔진 기반의 고속 문서 렌더링 및 저장\n• PDF 내보내기, 인쇄 및 다중 창 문서 작업 지원",
@@ -241,6 +258,24 @@
       "exe": "hop.exe",
       "extensions": ["hwp", "hwpx"],
       "mcp_args": ["mcp", "--connect", "127.0.0.1:49165"]
+    },
+    {
+      "id": "cutcraft",
+      "prefix": "Cut",
+      "group": "new",
+      "order": 16,
+      "tagline": "Fast timeline cut editing, shorts and video creation",
+      "tagline_ko": "빠른 타임라인 컷 편집, 쇼츠/릴스 제작 및 비디오 에디터",
+      "desc_ko": "CapCut 대체 무료 오픈소스 비디오 에디터 CutCraft(OpenCut)입니다.\n• 직관적인 타임라인 영상 컷 편집, 자막, 트랜지션 전환 효과 지원\n• 유튜브 쇼츠, 인스타그램 릴스, 틱톡 숏폼 영상 제작에 최적화\n• 클라우드 전송 없는 100% 로컬 개인정보 보호 및 워터마크 없는 무제한 내보내기",
+      "desc_en": "Open-source replacement for CapCut® based on OpenCut.\n• Fast timeline video cut editing, subtitles, and transition effects\n• Optimized for vertical short-form video creation (Shorts, Reels, TikTok)\n• 100% local processing with zero tracking, no watermarks, and free exports",
+      "like": "Like CapCut® (OpenCut)",
+      "like_ko": "CapCut 대체 (OpenCut)",
+      "accent": "#00E5FF",
+      "repo": "https://github.com/OpenCut-app/opencut-classic",
+      "website": "https://opencut.app",
+      "exe": "cutcraft.exe",
+      "extensions": ["mp4", "mov", "webm", "m4v", "mkv", "cutcraft"],
+      "mcp_args": ["mcp"]
     }
   ]
 }

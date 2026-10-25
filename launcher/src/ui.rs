@@ -25,9 +25,11 @@ const ICONS: &[(&str, &[u8])] = &[
     ("deckcraft", include_bytes!("../assets/icons/deckcraft.png")),
     ("gridcraft", include_bytes!("../assets/icons/gridcraft.png")),
     ("cadcraft", include_bytes!("../assets/icons/cadcraft.png")),
+    ("solidcraft", include_bytes!("../assets/icons/solidcraft.png")),
     ("soundcraft", include_bytes!("../assets/icons/soundcraft.png")),
     ("figcraft", include_bytes!("../assets/icons/figcraft.png")),
     ("hop", include_bytes!("../assets/icons/hop.png")),
+    ("cutcraft", include_bytes!("../assets/icons/cutcraft.png")),
 ];
 
 #[derive(PartialEq, Clone, Copy)]
@@ -52,6 +54,7 @@ enum Action {
     CheckUpdates,
     Update(usize),
     UpdateAll,
+    EditRepo(String),
 }
 
 pub struct Launcher {
@@ -82,6 +85,8 @@ pub struct Launcher {
     pub active_companion_app: String,
     pub embedded_ai_open: bool,
     manual_check_requested: bool,
+    pub repo_editor_app: Option<String>,
+    pub repo_editor_input: String,
 }
 
 fn load_texture(ctx: &egui::Context, name: &str, bytes: &[u8], max_w: Option<u32>) -> Option<TextureHandle> {
@@ -127,7 +132,9 @@ impl Launcher {
         for e in &entries {
             let id = e.meta.id.clone();
             let name = e.meta.name().to_string();
-            companions.insert(id.clone(), crate::companion::CompanionState::new_for_app(&id, &name));
+            let mut comp = crate::companion::CompanionState::new_for_app(&id, &name);
+            comp.is_open = state.auto_show_companion;
+            companions.insert(id.clone(), comp);
         }
 
         let mut launcher = Self {
@@ -156,13 +163,21 @@ impl Launcher {
             launch_after_install: None,
             companions,
             active_companion_app: "photocraft".to_string(),
-            embedded_ai_open: true,
+            embedded_ai_open: false,
             manual_check_requested: false,
+            repo_editor_app: None,
+            repo_editor_input: String::new(),
         };
 
         // 3M-style Startup Auto-Check: automatically match versions from GitHub on launch
-        let repos: Vec<(String, String)> =
-            launcher.entries.iter().map(|e| (e.meta.id.clone(), e.meta.repo.clone())).collect();
+        let repos: Vec<(String, String)> = launcher
+            .entries
+            .iter()
+            .map(|e| {
+                let r = launcher.state.custom_repos.get(&e.meta.id).cloned().unwrap_or_else(|| e.meta.repo.clone());
+                (e.meta.id.clone(), r)
+            })
+            .collect();
         launcher.updater.check_all_updates(repos);
 
         launcher
@@ -325,12 +340,14 @@ impl Launcher {
             Ok(pid) => {
                 apps::log(&format!("launched {id} (pid {pid}) exe={exe:?} file={file:?} save_dir={save_dir:?}"));
                 self.active_companion_app = id.clone();
-                self.embedded_ai_open = true;
-                let comp = self.companions.entry(id.clone()).or_insert_with(|| crate::companion::CompanionState::new_for_app(&id, &name));
-                comp.is_open = true;
-                comp.is_minimized = false;
-                comp.api_key = self.state.gemini_api_key.clone();
-                comp.provider = crate::companion::AiProvider::from_u8(self.state.ai_provider);
+                if self.state.auto_show_companion {
+                    self.embedded_ai_open = true;
+                    let comp = self.companions.entry(id.clone()).or_insert_with(|| crate::companion::CompanionState::new_for_app(&id, &name));
+                    comp.is_open = true;
+                    comp.is_minimized = false;
+                    comp.api_key = self.state.gemini_api_key.clone();
+                    comp.provider = crate::companion::AiProvider::from_u8(self.state.ai_provider);
+                }
                 self.state.last_opened.insert(id.clone(), apps::now_secs());
                 let run_count = self.runner.pids(&id).len();
                 let what = if self.is_ko() {
@@ -418,8 +435,14 @@ impl Launcher {
             }
             Action::CheckUpdates => {
                 self.manual_check_requested = true;
-                let repos: Vec<(String, String)> =
-                    self.entries.iter().map(|e| (e.meta.id.clone(), e.meta.repo.clone())).collect();
+                let repos: Vec<(String, String)> = self
+                    .entries
+                    .iter()
+                    .map(|e| {
+                        let r = self.state.custom_repos.get(&e.meta.id).cloned().unwrap_or_else(|| e.meta.repo.clone());
+                        (e.meta.id.clone(), r)
+                    })
+                    .collect();
                 self.updater.check_all_updates(repos);
                 let msg = if self.is_ko() {
                     "최신 버전 정보를 확인하고 있습니다..."
@@ -439,8 +462,10 @@ impl Launcher {
                     };
                     self.toast(msg, ERR);
                 } else {
+                    self.updater.start_batch(1);
                     self.show_progress_modal = true;
-                    self.updater.update_app(&e.meta.id, &e.meta.repo, &e.dir);
+                    let target_repo = self.state.custom_repos.get(&e.meta.id).cloned().unwrap_or_else(|| e.meta.repo.clone());
+                    self.updater.update_app(&e.meta.id, &target_repo, &e.dir);
                     let msg = if self.is_ko() {
                         format!("{name} 최신 버전 다운로드 및 업데이트 진행 중...")
                     } else {
@@ -450,22 +475,50 @@ impl Launcher {
                 }
             }
             Action::UpdateAll => {
-                let mut started = 0;
-                for (_i, e) in self.entries.iter().enumerate() {
-                    if !self.runner.is_running(&e.meta.id) && !self.updater.is_updating(&e.meta.id) {
-                        self.updater.update_app(&e.meta.id, &e.meta.repo, &e.dir);
-                        started += 1;
+                let mut targets: Vec<(String, String, PathBuf)> = Vec::new();
+                for e in &self.entries {
+                    if self.runner.is_running(&e.meta.id) || self.updater.is_updating(&e.meta.id) {
+                        continue;
+                    }
+                    let has_update = if let (Some(cur), Some(lat)) = (&e.version, self.updater.latest_version(&e.meta.id)) {
+                        crate::updater::is_newer(&lat, cur)
+                    } else {
+                        false
+                    };
+                    if has_update {
+                        let repo = self.state.custom_repos.get(&e.meta.id).cloned().unwrap_or_else(|| e.meta.repo.clone());
+                        targets.push((e.meta.id.clone(), repo, e.dir.clone()));
                     }
                 }
-                if started > 0 {
-                    self.show_progress_modal = true;
-                }
-                let msg = if self.is_ko() {
-                    format!("{started}개 프로그램 일괄 업데이트 시작...")
+
+                if targets.is_empty() {
+                    let msg = if self.is_ko() {
+                        "모든 프로그램이 이미 최신 상태입니다."
+                    } else {
+                        "All programs are already up to date."
+                    };
+                    self.toast(msg, OK);
                 } else {
-                    format!("Started updating {started} apps...")
-                };
-                self.toast(msg, OK);
+                    let count = targets.len();
+                    self.updater.start_batch(count);
+                    self.show_progress_modal = true;
+                    for (id, repo, dir) in targets {
+                        self.updater.update_app(&id, &repo, &dir);
+                    }
+                    let msg = if self.is_ko() {
+                        format!("{count}개 프로그램 일괄 업데이트 시작...")
+                    } else {
+                        format!("Started updating {count} apps...")
+                    };
+                    self.toast(msg, OK);
+                }
+            }
+            Action::EditRepo(id) => {
+                let cur = self.state.custom_repos.get(&id).cloned().unwrap_or_else(|| {
+                    self.entries.iter().find(|e| e.meta.id == id).map(|e| e.meta.repo.clone()).unwrap_or_default()
+                });
+                self.repo_editor_input = cur;
+                self.repo_editor_app = Some(id);
             }
         }
     }
@@ -681,18 +734,11 @@ impl Launcher {
                                     };
                                     ui.label(RichText::new(msg).font(mono(11.0_f32)).strong().color(Color32::from_rgb(0xF5, 0xC0, 0x40)));
 
-                                    ui.add_space(8.0_f32);
-                                    let pb = egui::ProgressBar::new(pct)
-                                        .show_percentage()
-                                        .fill(Color32::from_rgb(0xF5, 0xC0, 0x40))
-                                        .corner_radius(3.0_f32);
-                                    ui.add_sized(vec2(160.0_f32, 16.0_f32), pb);
-
                                     let remaining = ui.available_width() - 95.0_f32;
                                     if remaining > 0.0_f32 {
                                         ui.add_space(remaining);
                                     }
-                                    if chip(ui, if ko { "3M 팝업 열기" } else { "Open Dialog" }, false, false).clicked() {
+                                    if chip(ui, if ko { "진행창 열기" } else { "Open Progress" }, false, false).clicked() {
                                         self.show_progress_modal = true;
                                     }
                                 } else {
@@ -903,9 +949,20 @@ impl Launcher {
                         ui.label(RichText::new(txt).font(mono(8.0_f32)).color(Color32::from_rgb(0xD8, 0x96, 0xFF)));
                     });
             }
+            if self.state.custom_repos.contains_key(&e.meta.id) {
+                ui.add_space(2.0_f32);
+                Frame::new()
+                    .fill(Color32::from_rgb(0x10, 0x24, 0x36))
+                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(0x3E, 0x98, 0xFA)))
+                    .inner_margin(Margin::symmetric(4, 1))
+                    .show(ui, |ui| {
+                        let txt = if ko { "내 깃허브" } else { "MY REPO" };
+                        ui.label(RichText::new(txt).font(mono(8.0_f32)).color(Color32::from_rgb(0x6A, 0xC4, 0xFF)));
+                    });
+            }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.menu_button(RichText::new("···").color(MUTED), |ui| {
-                    ui.set_min_width(220.0_f32);
+                    ui.set_min_width(230.0_f32);
                     let save_folder_txt = if ko { format!("📁 {} 저장 폴더 열기", e.meta.name()) } else { format!("📁 Open {} Save Folder", e.meta.name()) };
                     if ui.button(save_folder_txt).clicked() {
                         actions.push(Action::Folder(e.save_dir.clone()));
@@ -922,9 +979,15 @@ impl Launcher {
                         actions.push(Action::Update(i));
                         ui.close_menu();
                     }
+                    let repo_cfg_txt = if ko { "🔗 내 깃허브 저장소(포크) 연동..." } else { "🔗 Link My GitHub Repository..." };
+                    if ui.button(repo_cfg_txt).clicked() {
+                        actions.push(Action::EditRepo(e.meta.id.clone()));
+                        ui.close_menu();
+                    }
                     ui.separator();
+                    let repo_target = self.state.custom_repos.get(&e.meta.id).cloned().unwrap_or_else(|| e.meta.repo.clone());
                     if ui.button(if ko { "깃허브 저장소 열기" } else { "GitHub repository" }).clicked() {
-                        actions.push(Action::Url(e.meta.repo.clone()));
+                        actions.push(Action::Url(repo_target));
                         ui.close_menu();
                     }
                 });
@@ -1506,17 +1569,17 @@ impl Launcher {
                 ui.separator();
                 ui.add_space(6.0_f32);
 
-                ScrollArea::vertical().max_height(380.0_f32).show(ui, |ui| {
+                ScrollArea::vertical().max_height(400.0_f32).show(ui, |ui| {
                     egui::Grid::new("update_table")
                         .striped(true)
-                        .num_columns(6)
-                        .spacing(vec2(16.0_f32, 8.0_f32))
-                        .min_row_height(30.0_f32)
+                        .num_columns(7)
+                        .spacing(vec2(14.0_f32, 8.0_f32))
+                        .min_row_height(32.0_f32)
                         .show(ui, |ui| {
                             let headers = if ko {
-                                ["#", "프로그램", "현재 버전", "최신 버전", "상태", "동작"]
+                                ["#", "프로그램", "연동 저장소", "현재 버전", "최신 버전", "상태", "동작"]
                             } else {
-                                ["#", "APP", "CURRENT", "LATEST", "STATUS", "ACTION"]
+                                ["#", "APP", "REPOSITORY", "CURRENT", "LATEST", "STATUS", "ACTION"]
                             };
                             for h in headers {
                                 ui.label(RichText::new(h).font(mono(10.0_f32)).color(DIM));
@@ -1527,11 +1590,34 @@ impl Launcher {
                                 number_badge(ui, e.meta.order, hex(&e.meta.accent));
                                 ui.label(RichText::new(e.meta.name()).strong().color(INK));
 
+                                // Repository Column (Official or Custom User Fork)
+                                ui.horizontal(|ui| {
+                                    if let Some(custom) = self.state.custom_repos.get(&e.meta.id) {
+                                        let short_name = custom.trim_start_matches("https://github.com/").trim_start_matches("http://github.com/");
+                                        Frame::new()
+                                            .fill(Color32::from_rgb(0x10, 0x24, 0x36))
+                                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(0x3E, 0x98, 0xFA)))
+                                            .inner_margin(Margin::symmetric(4, 1))
+                                            .show(ui, |ui| {
+                                                ui.label(RichText::new(format!("🔗 {short_name}")).font(mono(8.5_f32)).color(Color32::from_rgb(0x6A, 0xC4, 0xFF)));
+                                            });
+                                    } else {
+                                        ui.label(RichText::new(if ko { "공식 업스트림" } else { "Official" }).font(mono(8.5_f32)).color(DIM));
+                                    }
+                                    let edit_btn = egui::Button::new(RichText::new("⚙").font(mono(8.5_f32)).color(MUTED))
+                                        .stroke(Stroke::NONE)
+                                        .fill(Color32::TRANSPARENT);
+                                    if ui.add(edit_btn).on_hover_text(if ko { "저장소 주소 변경 (내 깃허브 연동)" } else { "Change repository URL (Link My GitHub)" }).clicked() {
+                                        actions.push(Action::EditRepo(e.meta.id.clone()));
+                                    }
+                                });
+
                                 let cur_ver = e.version.as_deref().unwrap_or("—");
                                 ui.label(RichText::new(format!("v{cur_ver}")).font(mono(10.5_f32)).color(MUTED));
 
                                 let latest = self.updater.latest_version(&e.meta.id);
                                 let is_updating = self.updater.is_updating(&e.meta.id);
+                                let is_from_custom = self.updater.custom_source(&e.meta.id).is_some();
 
                                 let has_update = if let (Some(cur), Some(lat)) = (e.version.as_deref(), latest.as_deref()) {
                                     crate::updater::is_newer(lat, cur)
@@ -1552,7 +1638,11 @@ impl Launcher {
                                 };
 
                                 if has_update {
-                                    ui.label(RichText::new(format!("v{latest_str}")).font(mono(10.5_f32)).strong().color(Color32::from_rgb(0xF5, 0xC0, 0x40)));
+                                    if is_from_custom {
+                                        ui.label(RichText::new(format!("v{latest_str} (내 깃허브)")).font(mono(10.0_f32)).strong().color(Color32::from_rgb(0x6A, 0xC4, 0xFF)));
+                                    } else {
+                                        ui.label(RichText::new(format!("v{latest_str}")).font(mono(10.5_f32)).strong().color(Color32::from_rgb(0xF5, 0xC0, 0x40)));
+                                    }
                                 } else {
                                     ui.label(RichText::new(format!("v{latest_str}")).font(mono(10.5_f32)).color(DIM));
                                 }
@@ -1562,7 +1652,11 @@ impl Launcher {
                                     let pct_val = (p * 100.0) as u32;
                                     ui.label(RichText::new(format!("⏳ {pct_val}% · {desc}")).font(mono(10.0_f32)).color(Color32::from_rgb(0xF5, 0xC0, 0x40)));
                                 } else if has_update {
-                                    ui.label(RichText::new(if ko { "⚡ 업데이트 가능" } else { "⚡ Available" }).font(mono(10.0_f32)).strong().color(Color32::from_rgb(0xF5, 0xC0, 0x40)));
+                                    if is_from_custom {
+                                        ui.label(RichText::new(if ko { "⚡ 내 깃허브 새 버전" } else { "⚡ My Repo Update" }).font(mono(10.0_f32)).strong().color(Color32::from_rgb(0x6A, 0xC4, 0xFF)));
+                                    } else {
+                                        ui.label(RichText::new(if ko { "⚡ 업데이트 가능" } else { "⚡ Available" }).font(mono(10.0_f32)).strong().color(Color32::from_rgb(0xF5, 0xC0, 0x40)));
+                                    }
                                 } else if latest.is_some() {
                                     ui.label(RichText::new(if ko { "✔ 최신 상태" } else { "✔ Up to date" }).font(mono(10.0_f32)).color(OK));
                                 } else {
@@ -1594,6 +1688,104 @@ impl Launcher {
                 });
             });
         self.show_updates = open;
+    }
+
+    fn repo_editor_window(&mut self, ctx: &egui::Context, actions: &mut Vec<Action>) {
+        let Some(app_id) = self.repo_editor_app.clone() else { return };
+        let ko = self.is_ko();
+        let app_meta = self.entries.iter().find(|e| e.meta.id == app_id).map(|e| e.meta.clone());
+        let app_name = app_meta.as_ref().map(|m| m.name()).unwrap_or_else(|| app_id.clone());
+        let default_repo = app_meta.as_ref().map(|m| m.repo.clone()).unwrap_or_default();
+
+        let mut open = true;
+        let title = if ko {
+            format!("🔗 {app_name} - 내 깃허브 저장소(포크) 연동")
+        } else {
+            format!("🔗 Link My GitHub Repository - {app_name}")
+        };
+
+        egui::Window::new(RichText::new(title).font(mono(11.5_f32)))
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .default_width(500.0_f32)
+            .anchor(Align2::CENTER_CENTER, vec2(0.0_f32, 0.0_f32))
+            .frame(Frame::window(&ctx.style()).inner_margin(Margin::same(16)))
+            .show(ctx, |ui| {
+                ui.set_width(500.0_f32);
+
+                let guide = if ko {
+                    "프로그램 소스를 직접 수정/빌드하여 본인 깃허브 저장소(Releases)에 올리면,\n\
+                     런처가 내 깃허브의 최신 버전을 자동으로 감지하여 원클릭 덮어쓰기 업데이트를 지원합니다."
+                } else {
+                    "Link your own GitHub fork/repository. When you push new releases to GitHub,\n\
+                     ArtCraft Launcher automatically detects your new version and replaces the binary in-place."
+                };
+                ui.label(RichText::new(guide).size(11.5_f32).color(MUTED));
+                ui.add_space(10.0_f32);
+
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(if ko { "기본 공식 저장소:" } else { "Official repo:" }).font(mono(10.0_f32)).color(DIM));
+                    ui.label(RichText::new(&default_repo).font(mono(10.0_f32)).color(Color32::from_rgb(0xA0, 0xA0, 0xBC)));
+                });
+
+                ui.add_space(8.0_f32);
+                ui.label(RichText::new(if ko { "내 깃허브 저장소 주소 (URL 또는 owner/repo):" } else { "My GitHub repository URL or owner/repo:" }).font(mono(10.5_f32)).strong().color(Color32::from_rgb(0x6A, 0xC4, 0xFF)));
+                ui.add_space(3.0_f32);
+
+                ui.add(
+                    TextEdit::singleline(&mut self.repo_editor_input)
+                        .desired_width(ui.available_width())
+                        .hint_text("예: https://github.com/myname/cutcraft 또는 myname/cutcraft")
+                        .font(mono(11.0_f32)),
+                );
+
+                ui.add_space(14.0_f32);
+                ui.separator();
+                ui.add_space(10.0_f32);
+
+                ui.horizontal(|ui| {
+                    let save_lbl = if ko { "✔ 저장 및 버전 감지" } else { "✔ Save & Check" };
+                    let save_btn = egui::Button::new(RichText::new(save_lbl).font(mono(11.0_f32)).strong().color(Color32::from_rgb(0x10, 0x18, 0x20)))
+                        .fill(Color32::from_rgb(0x50, 0xFA, 0x9E))
+                        .corner_radius(4.0_f32);
+                    if ui.add(save_btn).clicked() {
+                        let clean = self.repo_editor_input.trim().to_string();
+                        if clean.is_empty() {
+                            self.state.custom_repos.remove(&app_id);
+                            self.toast(if ko { "저장소 연동이 해제되었습니다." } else { "Custom repo removed." }, MUTED);
+                        } else {
+                            self.state.custom_repos.insert(app_id.clone(), clean);
+                            self.toast(if ko { "내 깃허브 저장소를 등록했습니다. 최신 버전을 감지합니다." } else { "Linked custom repo. Checking releases..." }, OK);
+                        }
+                        self.state.save();
+                        self.repo_editor_app = None;
+                        actions.push(Action::CheckUpdates);
+                    }
+
+                    if self.state.custom_repos.contains_key(&app_id) {
+                        let reset_lbl = if ko { "↺ 공식 저장소로 초기화" } else { "Reset to Official" };
+                        if ui.button(reset_lbl).clicked() {
+                            self.state.custom_repos.remove(&app_id);
+                            self.state.save();
+                            self.repo_editor_app = None;
+                            actions.push(Action::CheckUpdates);
+                            self.toast(if ko { "공식 저장소로 초기화되었습니다." } else { "Reset to official repo." }, MUTED);
+                        }
+                    }
+
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        let cancel_lbl = if ko { "취소" } else { "Cancel" };
+                        if ui.button(cancel_lbl).clicked() {
+                            self.repo_editor_app = None;
+                        }
+                    });
+                });
+            });
+
+        if !open {
+            self.repo_editor_app = None;
+        }
     }
 
     fn settings_window(&mut self, ctx: &egui::Context, actions: &mut Vec<Action>) {
@@ -2071,8 +2263,22 @@ impl Launcher {
             });
 
         if let Some((target, file_path)) = open_action {
-            if let Some(pos) = self.entries.iter().position(|e| e.meta.id == target) {
-                self.launch(ctx, pos, Some(&file_path));
+            let pids = self.runner.pids(&target);
+            let app_name = self
+                .entries
+                .iter()
+                .find(|e| e.meta.id == target)
+                .map(|e| e.meta.name().to_string())
+                .unwrap_or_else(|| target.clone());
+
+            let is_running = !pids.is_empty() || crate::apps::get_app_window_info(&pids, &app_name).is_some();
+            if is_running {
+                // Focus and load directly into the active application instance (do not spawn new window)
+                crate::apps::open_file_in_running_app(&target, &file_path, &pids, &app_name);
+            } else {
+                if let Some(pos) = self.entries.iter().position(|e| e.meta.id == target) {
+                    self.launch(ctx, pos, Some(&file_path));
+                }
             }
         }
     }
@@ -2170,6 +2376,7 @@ impl eframe::App for Launcher {
             });
         self.updates_window(ctx, &mut actions);
         self.settings_window(ctx, &mut actions);
+        self.repo_editor_window(ctx, &mut actions);
         self.progress_modal(ctx);
         self.drop_overlay(ctx);
         self.toasts_ui(ctx);
@@ -2177,10 +2384,13 @@ impl eframe::App for Launcher {
         // Render docked AI companion viewport inside running apps (PhotoCraft, etc.)
         let mut companion_actions = Vec::new();
         let temp_dir = std::env::temp_dir().join("ArtCraftCompanion");
+        let mut any_companion_active = false;
         for (app_id, companion) in self.companions.iter_mut() {
             if !companion.is_open {
                 continue;
             }
+            any_companion_active = true;
+
             let pids = self.runner.pids(app_id);
             let app_name = self
                 .entries
@@ -2212,7 +2422,25 @@ impl eframe::App for Launcher {
                 companion_actions.push((target, file_path));
             }
         }
+        if any_companion_active {
+            ctx.request_repaint_after(std::time::Duration::from_millis(50));
+        }
         for (target, file_path) in companion_actions {
+            let pids = self.runner.pids(&target);
+            let app_name = self
+                .entries
+                .iter()
+                .find(|e| e.meta.id == target)
+                .map(|e| e.meta.name().to_string())
+                .unwrap_or_else(|| target.clone());
+
+            let is_running = !pids.is_empty() || crate::apps::get_app_window_info(&pids, &app_name).is_some();
+            if is_running {
+                // Apply directly to the currently running window; never spawn a new window
+                crate::apps::open_file_in_running_app(&target, &file_path, &pids, &app_name);
+                continue;
+            }
+
             if let Some(pos) = self.entries.iter().position(|e| e.meta.id == target) {
                 self.launch(ctx, pos, Some(&file_path));
             }

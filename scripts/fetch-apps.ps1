@@ -2,7 +2,8 @@
 # registry.json from GitHub Releases (storytold/*) and extracts them into dist/apps/<id>/.
 param(
     [string]$Arch = "x64",
-    [switch]$Force
+    [switch]$Force,
+    [string]$App = ""
 )
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
@@ -21,94 +22,110 @@ $cacheDir = Join-Path $root ".cache\downloads"
 $vjsonPath = Join-Path $root "version.json"
 New-Item -ItemType Directory -Force $appsDir, $cacheDir | Out-Null
 
-$headers = @{ "User-Agent" = "ArtCraftStudio" }
 $updatedVersions = @{}
 
 foreach ($app in $registry.apps) {
     $id   = $app.id
+    if ($App -and $id -ne $App) { continue }
     $dest = Join-Path $appsDir $id
 
     $repo = ($app.repo -replace '^https://github.com/', '')
     
-    # Fetch release info with curl fallback
-    $rel = $null
-    try {
-        $rel = Invoke-RestMethod "https://api.github.com/repos/$repo/releases/latest" -Headers $headers -TimeoutSec 8
-    } catch {
+    # 1. Direct redirect inspection (Bypasses GitHub API rate limits completely)
+    $latestTag = ""
+    $effUrl = & curl.exe -s -k -I -L -o NUL -w "%{url_effective}" "https://github.com/$repo/releases/latest"
+    if ($effUrl -match '/tag/(v?[0-9\.]+)') {
+        $latestTag = ($Matches[1] -replace '^v', '')
+    }
+
+    # Fallback to API if redirect inspection failed
+    if (-not $latestTag) {
         $tmp = Join-Path $env:TEMP ("gh_fetch_" + [System.Guid]::NewGuid().ToString("N") + ".json")
         & curl.exe -s -k -L -H "User-Agent: ArtCraftStudio" "https://api.github.com/repos/$repo/releases/latest" -o $tmp
         if (Test-Path $tmp) {
             $raw = Get-Content $tmp -Raw -Encoding UTF8
             $rel = $raw | ConvertFrom-Json
+            if ($rel -and $rel.tag_name) {
+                $latestTag = ($rel.tag_name -replace '^v', '')
+            }
             Remove-Item $tmp -Force -ErrorAction SilentlyContinue
         }
     }
 
-    if (-not $rel -or -not $rel.tag_name) {
-        Write-Warning "[skip] $id could not fetch release from $repo"
+    if (-not $latestTag) {
+        Write-Warning "[skip] $id could not resolve latest version from $repo"
         continue
     }
 
-    $latestTag = ($rel.tag_name -replace '^v', '')
     $verFile = Join-Path $dest ".version"
     $currentVer = if (Test-Path $verFile) { (Get-Content $verFile -Raw).Trim() } else { "" }
 
     if ((Test-Path $dest) -and ($currentVer -eq $latestTag) -and -not $Force) {
-        Write-Host "[skip] $id is already at latest v$latestTag (use -Force to re-download)"
+        Write-Host "[skip] $id is already at latest v$latestTag" -ForegroundColor DarkGray
         $updatedVersions[$id] = $latestTag
         continue
     }
 
     Write-Host "[info] ${id}: current v$currentVer -> latest v$latestTag" -ForegroundColor Cyan
 
-    $asset = $rel.assets | Where-Object { $_.name -like "*-windows-$Arch-portable.zip" } | Select-Object -First 1
-    if (-not $asset) {
-        $asset = $rel.assets | Where-Object { $_.name -like "*windows*.zip" } | Select-Object -First 1
+    # Determine asset name and download URL
+    $assetName = "$id-$latestTag-windows-$Arch-portable.zip"
+    if ($id -eq "hop") {
+        $assetName = "HOP-windows-$Arch.exe"
     }
-    if (-not $asset) {
-        $asset = $rel.assets | Where-Object { $_.name -like "*windows*$Arch*.exe" -or $_.name -like "*windows*.exe" -or $_.name -like "*.exe" } | Select-Object -First 1
-    }
-    if (-not $asset) { Write-Warning "[miss] $id has no windows-$Arch asset"; continue }
 
-    $zip = Join-Path $cacheDir $asset.name
-    if (-not (Test-Path $zip) -or $Force) {
-        Write-Host "[get ] $id $($rel.tag_name) <- $($asset.name)" -ForegroundColor Yellow
-        & curl.exe -k -L -A "ArtCraftStudio" $asset.browser_download_url -o $zip
-        if (-not (Test-Path $zip) -or (Get-Item $zip).Length -lt 1000) {
-            Invoke-WebRequest $asset.browser_download_url -OutFile $zip -UseBasicParsing
+    $downloadUrl = "https://github.com/$repo/releases/download/v$latestTag/$assetName"
+    
+    # Check if download URL is accessible
+    $httpCode = & curl.exe -s -k -I -o NUL -w "%{http_code}" -L $downloadUrl
+    if ($httpCode -ne "200") {
+        # Try without 'v' prefix in download url
+        $downloadUrlNoV = "https://github.com/$repo/releases/download/$latestTag/$assetName"
+        $httpCode2 = & curl.exe -s -k -I -o NUL -w "%{http_code}" -L $downloadUrlNoV
+        if ($httpCode2 -eq "200") {
+            $downloadUrl = $downloadUrlNoV
+        } else {
+            Write-Warning "[miss] $id asset $assetName not directly reachable (HTTP $httpCode)"
+            continue
         }
     }
 
+    $zip = Join-Path $cacheDir $assetName
+    if (-not (Test-Path $zip) -or (Get-Item $zip).Length -lt 1000 -or $Force) {
+        Write-Host "[get ] $id v$latestTag <- $assetName" -ForegroundColor Yellow
+        & curl.exe -k -L -A "ArtCraftStudio" "$downloadUrl" -o "$zip"
+        if (-not (Test-Path $zip) -or (Get-Item $zip).Length -lt 1000) {
+            Write-Warning "[fail] Failed to download $assetName"
+            continue
+        }
+    }
+
+    # Extract or copy to destination
     if (Test-Path $dest) { Remove-Item $dest -Recurse -Force }
+
     if ($zip -match '\.exe$') {
         New-Item -ItemType Directory -Force $dest | Out-Null
-        if ($id -eq "hop" -or $asset.name -match 'setup|install') {
-            $tmpExtract = Join-Path $cacheDir "_x_$id"
-            if (Test-Path $tmpExtract) { Remove-Item $tmpExtract -Recurse -Force }
-            New-Item -ItemType Directory -Force $tmpExtract | Out-Null
-            Start-Process -FilePath $zip -ArgumentList "/S /D=$tmpExtract" -Wait -NoNewWindow
-            Start-Sleep -Seconds 1
-            if (Test-Path (Join-Path $tmpExtract "uninstall.exe")) {
-                Remove-Item (Join-Path $tmpExtract "uninstall.exe") -Force -ErrorAction SilentlyContinue
-            }
-            Get-ChildItem $tmpExtract | Copy-Item -Destination $dest -Recurse -Force
-            $realExe = Get-ChildItem -Path $dest -Filter "*.exe" | Where-Object { $_.Name -notmatch 'uninst|setup|crash|update' } | Select-Object -First 1
-            if ($realExe) {
-                Copy-Item $realExe.FullName (Join-Path $dest "$id.exe") -Force
-            }
-            Remove-Item $tmpExtract -Recurse -Force -ErrorAction SilentlyContinue
-        } else {
-            Copy-Item $zip (Join-Path $dest "$id.exe") -Force
-        }
+        Copy-Item $zip (Join-Path $dest "$id.exe") -Force
     } else {
         $tmp = Join-Path $cacheDir "_x_$id"
         if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force }
-        Expand-Archive $zip -DestinationPath $tmp -Force
+        New-Item -ItemType Directory -Force $tmp | Out-Null
+
+        # Fast extraction using tar.exe if available, fallback to Expand-Archive
+        $hasTar = Get-Command tar.exe -ErrorAction SilentlyContinue
+        if ($hasTar) {
+            & tar.exe -xf "$zip" -C "$tmp"
+        } else {
+            Expand-Archive "$zip" -DestinationPath "$tmp" -Force
+        }
 
         # Flatten a single top-level folder if the zip contains one.
         $items = Get-ChildItem $tmp
-        if ($items.Count -eq 1 -and $items[0].PSIsContainer) { Move-Item $items[0].FullName $dest }
-        else { Move-Item $tmp $dest }
+        if ($items.Count -eq 1 -and $items[0].PSIsContainer) { 
+            Move-Item $items[0].FullName $dest 
+        } else { 
+            Move-Item $tmp $dest 
+        }
         if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force }
     }
 
@@ -125,6 +142,7 @@ if (Test-Path $vjsonPath) {
         foreach ($prop in $vjson.apps.PSObject.Properties) {
             if ($updatedVersions.ContainsKey($prop.Name)) {
                 $prop.Value.version = $updatedVersions[$prop.Name]
+                $prop.Value.asset = "$($prop.Name)-$($updatedVersions[$prop.Name])-windows-x64-portable.zip"
             }
         }
         $vjson | ConvertTo-Json -Depth 5 | Set-Content $vjsonPath -Encoding UTF8

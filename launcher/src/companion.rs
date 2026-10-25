@@ -171,6 +171,9 @@ pub struct CompanionState {
     pub last_dock_size: Option<[f32; 2]>,
     pub side_menu_detected: bool,
     pub last_side_menu_check: u64,
+    pub dock_beside_sidebar: bool,
+    pub native_sidebar_px: f32,
+    pub last_sidebar_check: u64,
     resp_sender: Sender<AsyncResponse>,
     resp_receiver: Receiver<AsyncResponse>,
 }
@@ -202,6 +205,7 @@ impl CompanionState {
             "deckcraft" => "안녕하세요! DeckCraft 프레젠테이션 AI 어시스턴트입니다.\n'발표 슬라이드 초안', '투자 피치덱 5장 구성', '사업계획서 발표자료'를 제작해 드립니다.",
             "gridcraft" => "안녕하세요! GridCraft 스프레드시트 AI 어시스턴트입니다.\n'가계부 표 생성', '견적서 서식', '월별 매출 통계 시트', '수식 자동 계산'을 도와드립니다.",
             "cadcraft" => "안녕하세요! CADCraft 2D/3D CAD 모델링 AI 어시스턴트입니다.\n'3D 큐브/기어 모델링', '기하 형상 OBJ 생성', '기계 부품 도면 초안'을 지원합니다.",
+            "solidcraft" => "안녕하세요! SolidCraft 파라메트릭 3D CAD AI 어시스턴트입니다.\n'솔리드 모델링 설계', '3D 부품 파라메트릭 스케치', 'STEP/OBJ 모델 생성'을 도와드립니다.",
             "soundcraft" => "안녕하세요! SoundCraft 디지털 오디오 AI 어시스턴트입니다.\n'팟캐스트 녹음 대본', '라디오 오프닝 스크립트', '음향 SFX 큐시트' 작성을 도와드립니다.",
             "figcraft" => "안녕하세요! FigCraft UI/UX 디자인 AI 어시스턴트입니다.\n'모바일 앱 로그인 화면 UI 기획', '대시보드 와이어프레임 구조', '디자인 시스템 토큰'을 설계해 드립니다.",
             "hop" => "안녕하세요! HopCraft 대한민국 공문서 AI 어시스턴트입니다.\n'표준 공문서 양식', '기안서/품의서 작성', 'HWP 공문서 서식' 작성을 도와드립니다.",
@@ -235,6 +239,9 @@ impl CompanionState {
             last_dock_size: None,
             side_menu_detected: false,
             last_side_menu_check: 0,
+            dock_beside_sidebar: true,
+            native_sidebar_px: 0.0,
+            last_sidebar_check: 0,
             resp_sender: tx,
             resp_receiver: rx,
         }
@@ -277,6 +284,15 @@ impl CompanionState {
                 bytes: std::borrow::Cow::Borrowed(rgba.as_raw()),
             };
             clip.set_image(img_data).is_ok()
+        } else {
+            false
+        }
+    }
+
+    /// Copies plain text to the system clipboard
+    pub fn copy_text_to_clipboard(text: &str) -> bool {
+        if let Ok(mut clip) = arboard::Clipboard::new() {
+            clip.set_text(text.to_string()).is_ok()
         } else {
             false
         }
@@ -457,7 +473,7 @@ impl CompanionState {
 
     /// Polls background AI response and updates working image
     pub fn poll_response(&mut self, ctx: &egui::Context, _pids: &[u32], _app_name: &str) -> Option<(String, PathBuf)> {
-        let mut auto_open = None;
+        let auto_open: Option<(String, PathBuf)> = None;
         if let Ok(resp) = self.resp_receiver.try_recv() {
             self.is_busy = false;
             match resp {
@@ -475,7 +491,8 @@ impl CompanionState {
                     }
                     if let Some(act) = &action {
                         if act.auto_open {
-                            auto_open = Some((act.app_id.clone(), act.file_path.clone()));
+                            // Load into the app that is already open; never spawn a new window
+                            let _ = live_open_via_rpc(&act.app_id, &act.file_path);
                         }
                     }
                     self.messages.push(ChatMessage {
@@ -539,6 +556,7 @@ impl CompanionState {
             "photocraft" => "PhotoCraft",
             "wordcraft" => "WordCraft",
             "cadcraft" => "CADCraft",
+            "solidcraft" => "SolidCraft",
             "deckcraft" => "DeckCraft",
             "designcraft" => "DesignCraft",
             "effectcraft" => "EffectCraft",
@@ -577,6 +595,7 @@ impl CompanionState {
             "photocraft" => "PhotoCraft",
             "wordcraft" => "WordCraft",
             "cadcraft" => "CADCraft",
+            "solidcraft" => "SolidCraft",
             "deckcraft" => "DeckCraft",
             "designcraft" => "DesignCraft",
             "effectcraft" => "EffectCraft",
@@ -677,26 +696,36 @@ impl CompanionState {
 
         let vp_id = ViewportId::from_hash_of(format!("companion_dock_{app_id}"));
 
-        // Match DeckCraft Format Shape & PhotoCraft right panel column width (288px)
-        let width = 288.0_f32;
+        let is_solidcraft = app_id.eq_ignore_ascii_case("solidcraft");
+        let is_cadcraft = app_id.eq_ignore_ascii_case("cadcraft");
+
+        // Dynamic width: slim 36px toggle strip when minimized, 300px native panel width when open
+        let width = if self.is_minimized {
+            36.0_f32
+        } else {
+            300.0_f32
+        };
         let ppp = ctx.pixels_per_point().max(0.1);
 
         let app_info = crate::apps::get_app_window_info(pids, app_name);
         let (target_hwnd, app_rect) = match app_info {
             Some((hwnd, rect)) => (hwnd, rect),
             None => {
-                ctx.send_viewport_cmd_to(vp_id, egui::ViewportCommand::Visible(false));
+                if self.last_dock_pos.is_some() {
+                    ctx.send_viewport_cmd_to(vp_id, egui::ViewportCommand::Visible(false));
+                }
+                ctx.request_repaint_after(std::time::Duration::from_millis(50));
                 return;
             }
         };
 
-        // Window Synchronization: Only show when target app or companion is active and not minimized
+        // Window Synchronization: Only hide when target app is minimized to taskbar
         let companion_title = format!("{app_name} AI");
-        let is_minimized = crate::apps::is_window_iconic(target_hwnd);
-        let is_foreground = crate::apps::is_app_or_companion_foreground(target_hwnd, &companion_title, pids);
+        let is_target_minimized = crate::apps::is_window_iconic(target_hwnd);
 
-        if is_minimized || !is_foreground {
+        if is_target_minimized {
             ctx.send_viewport_cmd_to(vp_id, egui::ViewportCommand::Visible(false));
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
             return;
         }
 
@@ -707,29 +736,64 @@ impl CompanionState {
             self.side_menu_detected = crate::apps::detect_side_menu_open(target_hwnd, app_rect, ppp, app_id);
         }
 
+        let left_pt = app_rect[0] / ppp;
         let right_pt = app_rect[2] / ppp;
         let top_pt = app_rect[1] / ppp;
         let bottom_pt = app_rect[3] / ppp;
 
-        // Strictly dock to the right edge of the target application window
-        let x = right_pt - width;
+        // Dynamic offsets based on application ribbon & status bar heights:
+        // SolidCraft: Top ribbon (titlebar + tabs + sketch toolbar + category chevrons) = 172px, Bottom history timeline = 42px
+        // CADCraft: Top menu/toolbars/tab = 108px, Bottom status bar = 28px
+        let (top_offset, bottom_offset) = match app_id.to_lowercase().as_str() {
+            "solidcraft" => (172.0_f32, 42.0_f32),
+            "cadcraft" => (108.0_f32, 28.0_f32),
+            "filmcraft" => (85.0_f32, 30.0_f32),
+            "wordcraft" | "gridcraft" => (125.0_f32, 28.0_f32),
+            _ => (118.0_f32, 26.0_f32),
+        };
 
-        let (y, height) = if !self.side_menu_detected {
-            // (a) [기본 상태 - 우측 사이드 메뉴가 없을 때]:
-            // 상단 리본 툴바 바로 아래(top + 118px)부터 하단 상태바 바로 위(bottom - 26px)까지
-            // 우측 사이드 영역 전체 높이(Full-Height)로 길게 표시
-            let start_y = top_pt + 118.0_f32;
-            let end_y = bottom_pt - 26.0_f32;
+        // Dock directly left of the app's native right sidebar so it is never covered
+        if now_ms.saturating_sub(self.last_sidebar_check) >= 700 {
+            self.last_sidebar_check = now_ms;
+            if let Some(px) = crate::apps::detect_native_sidebar_width(target_hwnd) {
+                if px > 100.0_f32 && (px - self.native_sidebar_px).abs() >= 3.0_f32 {
+                    self.native_sidebar_px = px;
+                }
+            }
+        }
+
+        let fallback_sidebar_pt = crate::apps::default_sidebar_width_for_app(app_id);
+        let detected_sidebar_pt = if self.native_sidebar_px > 100.0_f32 {
+            self.native_sidebar_px / ppp
+        } else {
+            0.0_f32
+        };
+
+        // If detected sidebar width is valid, use it; otherwise use calibrated native sidebar profile
+        let effective_sidebar_pt = if detected_sidebar_pt > 50.0_f32 {
+            detected_sidebar_pt
+        } else {
+            fallback_sidebar_pt
+        };
+
+        let sidebar_offset = if self.dock_beside_sidebar {
+            effective_sidebar_pt
+        } else {
+            0.0_f32
+        };
+
+        let x = (right_pt - sidebar_offset - width).max(left_pt);
+
+        let (y, height) = if !self.side_menu_detected || self.native_sidebar_px > 0.0_f32 {
+            let start_y = top_pt + top_offset;
+            let end_y = bottom_pt - bottom_offset;
             let h = (end_y - start_y).max(180.0_f32);
             (start_y, h)
         } else {
-            // (b) [객체/텍스트 선택 상태 - 우측 사이드 메뉴(Format Shape 등)가 열렸을 때]:
-            // 상단의 Format Shape 옵션들(Fill, Line 등)을 절대 가리지 않도록,
-            // AI 도우미의 높이를 하단 영역(하단 340px)으로 자동 축소하여 우측 사이드 메뉴 하단 빈 공간에 배치
             let compact_h = 340.0_f32;
-            let max_h = (bottom_pt - 26.0_f32) - (top_pt + 118.0_f32);
+            let max_h = (bottom_pt - bottom_offset) - (top_pt + top_offset);
             let h = compact_h.min(max_h).max(180.0_f32);
-            let start_y = (bottom_pt - 26.0_f32) - h;
+            let start_y = (bottom_pt - bottom_offset) - h;
             (start_y, h)
         };
 
@@ -738,7 +802,7 @@ impl CompanionState {
         let builder = ViewportBuilder::default()
             .with_title(companion_title.clone())
             .with_inner_size([width, height])
-            .with_min_inner_size([width, 150.0_f32])
+            .with_min_inner_size([36.0_f32, 150.0_f32])
             .with_max_inner_size([width, 3000.0_f32])
             .with_resizable(false)
             .with_visible(true)
@@ -747,6 +811,7 @@ impl CompanionState {
             .with_position([x, y]);
 
         ctx.show_viewport_immediate(vp_id, builder, |ctx, _class| {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
             if self.last_dock_pos != Some([x, y]) {
                 ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(x, y)));
                 self.last_dock_pos = Some([x, y]);
@@ -772,17 +837,64 @@ impl CompanionState {
                 }
             }
 
+            let bg_color = if is_solidcraft {
+                Color32::from_rgb(0x18, 0x18, 0x1B) // SolidCraft Zinc Dark
+            } else if is_cadcraft {
+                Color32::from_rgb(0x1E, 0x22, 0x2B) // CADCraft Slate Dark
+            } else {
+                Color32::from_rgb(0x22, 0x24, 0x2B)
+            };
+            let border_color = if is_solidcraft {
+                Color32::from_rgb(0x27, 0x27, 0x2A) // SolidCraft subtle border
+            } else if is_cadcraft {
+                Color32::from_rgb(0x2D, 0x33, 0x3F) // CADCraft subtle border
+            } else {
+                Color32::from_rgb(0x1C, 0x1E, 0x24)
+            };
+
             egui::CentralPanel::default()
                 .frame(
                     Frame::new()
-                        .fill(Color32::from_rgb(0x22, 0x24, 0x2B))
-                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(0x1C, 0x1E, 0x24)))
+                        .fill(bg_color)
+                        .stroke(Stroke::new(1.0_f32, border_color))
                         .corner_radius(0.0_f32)
-                        .inner_margin(Margin::ZERO),
+                        .inner_margin(Margin { left: 0, right: 0, top: 0, bottom: 8 }),
                 )
                 .show(ctx, |ui| {
-                    self.render_full(ui, ctx, entries, saves_base, temp_dir, open_action, app_name, pids);
+                    if self.is_minimized {
+                        self.render_minimized_strip(ui, is_solidcraft, is_cadcraft);
+                    } else {
+                        self.render_full(ui, ctx, entries, saves_base, temp_dir, open_action, app_name, pids);
+                    }
                 });
+        });
+    }
+
+    fn render_minimized_strip(&mut self, ui: &mut Ui, is_solidcraft: bool, is_cadcraft: bool) {
+        let accent_color = if is_solidcraft {
+            Color32::from_rgb(0x22, 0xC5, 0x5E)
+        } else if is_cadcraft {
+            Color32::from_rgb(0x1F, 0xA6, 0xC9)
+        } else {
+            Color32::from_rgb(0x68, 0x98, 0xFF)
+        };
+
+        ui.vertical_centered(|ui| {
+            ui.add_space(8.0_f32);
+            let btn = ui.add(
+                egui::Button::new(RichText::new("◀").size(12.0_f32).color(accent_color).strong())
+                    .frame(false)
+            ).on_hover_text("ai 도우미 표시하기");
+            if btn.clicked() {
+                self.is_minimized = false;
+            }
+            ui.add_space(8.0_f32);
+            ui.label(RichText::new("✨").size(14.0_f32).color(accent_color));
+            ui.add_space(10.0_f32);
+            for ch in ["A", "I", "도", "우", "미"] {
+                ui.label(RichText::new(ch).size(10.5_f32).color(Color32::from_rgb(0xD0, 0xD0, 0xD8)).strong());
+                ui.add_space(2.0_f32);
+            }
         });
     }
 
@@ -810,23 +922,85 @@ impl CompanionState {
         saves_base: &Path,
         temp_dir: &Path,
         open_action: &mut Option<(String, PathBuf)>,
-        _app_name: &str,
+        app_name: &str,
         _pids: &[u32],
     ) {
-        // --- PhotoCraft Native Tab Header Bar ---
+        let is_solidcraft = app_name.to_lowercase().contains("solidcraft");
+        let is_cadcraft = app_name.to_lowercase().contains("cadcraft");
+        let header_bg = if is_solidcraft {
+            Color32::from_rgb(0x1F, 0x1F, 0x23)
+        } else if is_cadcraft {
+            Color32::from_rgb(0x23, 0x27, 0x32)
+        } else {
+            Color32::from_rgb(0x2B, 0x2D, 0x33)
+        };
+        let border_stroke_color = if is_solidcraft {
+            Color32::from_rgb(0x27, 0x27, 0x2A)
+        } else if is_cadcraft {
+            Color32::from_rgb(0x2D, 0x33, 0x3F)
+        } else {
+            Color32::from_rgb(0x1C, 0x1E, 0x24)
+        };
+        let accent_color = if is_solidcraft {
+            Color32::from_rgb(0x22, 0xC5, 0x5E)
+        } else if is_cadcraft {
+            Color32::from_rgb(0x1F, 0xA6, 0xC9)
+        } else {
+            Color32::from_rgb(0x68, 0x98, 0xFF)
+        };
+
+        // --- Native Side Panel Header Bar ---
         Frame::new()
-            .fill(Color32::from_rgb(0x2B, 0x2D, 0x33))
-            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(0x1C, 0x1E, 0x24)))
+            .fill(header_bg)
+            .stroke(Stroke::new(1.0_f32, border_stroke_color))
             .corner_radius(0.0_f32)
-            .inner_margin(Margin::symmetric(10, 5))
+            .inner_margin(Margin::symmetric(10, 6))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
+                    // Left thin arrow button: collapse/hide AI companion
+                    let collapse_btn = ui.add(
+                        egui::Button::new(RichText::new("▶").size(11.0_f32).color(accent_color).strong())
+                            .frame(false)
+                    ).on_hover_text("ai 도우미 숨기기");
+                    if collapse_btn.clicked() {
+                        self.is_minimized = true;
+                    }
+                    ui.add_space(4.0_f32);
+
                     ui.label(
-                        RichText::new("AI 도우미")
+                        RichText::new("✨ AI 도우미")
                             .strong()
                             .size(11.5_f32)
-                            .color(Color32::from_rgb(0xDF, 0xE1, 0xE8)),
+                            .color(if is_solidcraft || is_cadcraft { accent_color } else { Color32::from_rgb(0xDF, 0xE1, 0xE8) }),
                     );
+                    if is_solidcraft {
+                        ui.label(
+                            RichText::new("SolidCraft 3D")
+                                .font(egui::FontId::monospace(9.5_f32))
+                                .color(Color32::from_rgb(0x71, 0x71, 0x7A)),
+                        );
+                    } else if is_cadcraft {
+                        ui.label(
+                            RichText::new("CADCraft 2D/3D")
+                                .font(egui::FontId::monospace(9.5_f32))
+                                .color(Color32::from_rgb(0x6D, 0x82, 0x99)),
+                        );
+                    }
+
+                    // Right side toggle: Keep beside native sidebar vs dock to window edge
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        let (icon, tip, color) = if self.dock_beside_sidebar {
+                            ("◫", "기존 사이드바 나란히 배치 (사이드바 가림 방지 중)\n클릭하면 창 오른쪽 끝으로 붙입니다", accent_color)
+                        } else {
+                            ("⇥", "창 오른쪽 끝에 도킹됨\n클릭하면 기존 사이드바를 가리지 않도록 나란히 배치합니다", Color32::from_rgb(0x70, 0x75, 0x88))
+                        };
+                        if ui.add(egui::Button::new(RichText::new(icon).size(13.0_f32).color(color)).frame(false))
+                            .on_hover_text(tip)
+                            .clicked()
+                        {
+                            self.dock_beside_sidebar = !self.dock_beside_sidebar;
+                        }
+                    });
                 });
             });
 
@@ -836,9 +1010,9 @@ impl CompanionState {
 
         // --- Chat message area ---
         let footer_height = if self.pending_image.is_some() || self.working_image.is_some() {
-            135.0_f32
+            170.0_f32
         } else {
-            38.0_f32
+            76.0_f32
         };
         let scroll_height = (ui.available_height() - footer_height).max(80.0_f32);
 
@@ -1094,17 +1268,50 @@ impl CompanionState {
             self.pending_image = None;
         }
 
-        // --- Input Area (Simplified pure text input with Enter send & Ctrl+V support) ---
-        ui.add_space(2.0_f32);
-        let full_width = (ui.available_width() - 8.0_f32).max(100.0_f32);
+        // --- Input Area (Rounded card container with send button and comfortable bottom breathing margin) ---
+        ui.add_space(4.0_f32);
+        let mut send_clicked = false;
+        // total = left margin 8 + item spacing + frame (inner margin 12*2 + stroke 2) + inner width + right margin 8
+        let card_w = (ui.available_width() - 8.0_f32 - ui.spacing().item_spacing.x - 26.0_f32 - 8.0_f32).max(120.0_f32);
+
         let resp = ui.horizontal(|ui| {
-            ui.add_space(4.0_f32);
-            ui.add(
-                egui::TextEdit::singleline(&mut self.input_text)
-                    .hint_text("요청 입력... (Enter 전송, Ctrl+V 사진/텍스트 붙여넣기)")
-                    .desired_width(full_width),
-            )
+            ui.add_space(8.0_f32); // Left breathing margin
+            Frame::new()
+                .fill(Color32::from_rgb(0x13, 0x15, 0x1D))
+                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(0x2E, 0x32, 0x40)))
+                .corner_radius(12.0_f32)
+                .inner_margin(Margin::symmetric(12, 7))
+                .show(ui, |ui| {
+                    ui.set_width(card_w);
+                    ui.horizontal(|ui| {
+                        let text_w = (card_w - 24.0_f32 - ui.spacing().item_spacing.x).max(60.0_f32);
+                        let text_resp = ui.add(
+                            egui::TextEdit::singleline(&mut self.input_text)
+                                .hint_text("요청사항을 입력하세요...")
+                                .frame(false)
+                                .desired_width(text_w),
+                        );
+
+                        let has_content = !self.input_text.trim().is_empty() || self.pending_image.is_some();
+                        let send_color = if has_content && !self.is_busy {
+                            accent_color
+                        } else {
+                            Color32::from_rgb(0x4A, 0x4E, 0x5E)
+                        };
+
+                        let send_btn = ui.add(
+                            egui::Button::new(RichText::new("➤").size(12.0_f32).color(send_color))
+                                .frame(false)
+                        ).on_hover_text("전송 (Enter)");
+                        if send_btn.clicked() {
+                            send_clicked = true;
+                        }
+
+                        text_resp
+                    }).inner
+                }).inner
         }).inner;
+        ui.add_space(14.0_f32); // Bottom breathing margin so it never touches the window border
 
         // Directly intercept Ctrl+V while the input box is focused to check for image in clipboard
         if resp.has_focus() {
@@ -1128,9 +1335,10 @@ impl CompanionState {
             }
         }
 
-        // Press Enter to send
+        // Press Enter or click ➤ to send
         let enter_pressed = (resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)))
-            || (resp.has_focus() && ui.input(|i| i.key_pressed(Key::Enter)));
+            || (resp.has_focus() && ui.input(|i| i.key_pressed(Key::Enter)))
+            || send_clicked;
         if enter_pressed
             && !self.is_busy
             && (!self.input_text.trim().is_empty() || self.pending_image.is_some())
@@ -1214,6 +1422,370 @@ pub fn photocraft_live_reload_document(file_path: &Path) -> bool {
     }
 
     false
+}
+
+/// Sends one JSON-RPC request to a running Craft app's control port (no new process / window).
+/// Returns the `result` value on success.
+pub fn app_rpc_call(app_id: &str, method: &str, params: &serde_json::Value) -> Option<serde_json::Value> {
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::{SocketAddr, TcpStream};
+    use std::time::Duration;
+
+    let port = crate::apps::get_app_control_port(app_id)?;
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    let mut stream = TcpStream::connect_timeout(&addr, Duration::from_millis(300)).ok()?;
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(4000)));
+    let _ = stream.set_write_timeout(Some(Duration::from_millis(2000)));
+    let mut reader = BufReader::new(stream.try_clone().ok()?);
+    let mut line = String::new();
+
+    // Some apps require auth, others reply "unknown method" which is harmless
+    let auth = serde_json::json!({"id": 1, "method": "auth", "params": {"token": crate::apps::COMMON_CONTROL_TOKEN}});
+    stream.write_all(format!("{auth}\n").as_bytes()).ok()?;
+    reader.read_line(&mut line).ok()?;
+
+    let req = serde_json::json!({"id": 2, "method": method, "params": params});
+    stream.write_all(format!("{req}\n").as_bytes()).ok()?;
+    line.clear();
+    reader.read_line(&mut line).ok()?;
+    let resp: serde_json::Value = serde_json::from_str(line.trim()).ok()?;
+    if resp.get("ok").and_then(|v| v.as_bool()) == Some(true) {
+        Some(resp.get("result").cloned().unwrap_or(serde_json::Value::Null))
+    } else {
+        None
+    }
+}
+
+/// Opens a file inside the already running app instance via its control RPC.
+pub fn live_open_via_rpc(app_id: &str, path: &Path) -> bool {
+    let p = path.to_string_lossy().replace('\\', "/");
+    app_rpc_call(app_id, "app.open", &serde_json::json!({ "path": p })).is_some()
+}
+
+fn parse_csv_rows(csv: &str) -> Vec<Vec<String>> {
+    let mut rows = Vec::new();
+    for raw in csv.lines() {
+        let mut cells = Vec::new();
+        let mut cur = String::new();
+        let mut in_q = false;
+        let mut chars = raw.chars().peekable();
+        while let Some(c) = chars.next() {
+            match c {
+                '"' if in_q && chars.peek() == Some(&'"') => {
+                    cur.push('"');
+                    chars.next();
+                }
+                '"' => in_q = !in_q,
+                ',' if !in_q => cells.push(std::mem::take(&mut cur)),
+                _ => cur.push(c),
+            }
+        }
+        cells.push(cur);
+        rows.push(cells);
+    }
+    rows
+}
+
+/// Writes CSV content straight into the sheet currently open in GridCraft (A1 origin).
+pub fn gridcraft_live_fill_csv(csv: &str) -> bool {
+    let rows = parse_csv_rows(csv.trim_start_matches('\u{feff}'));
+    if rows.is_empty() {
+        return false;
+    }
+    let width = rows.iter().map(|r| r.len()).max().unwrap_or(0);
+    let values: Vec<Vec<serde_json::Value>> = rows
+        .into_iter()
+        .map(|r| {
+            let mut out: Vec<serde_json::Value> = r
+                .into_iter()
+                .map(|c| {
+                    let t = c.trim();
+                    if t.is_empty() {
+                        serde_json::Value::Null
+                    } else if let Ok(n) = t.parse::<f64>() {
+                        serde_json::json!(n)
+                    } else {
+                        serde_json::Value::String(c)
+                    }
+                })
+                .collect();
+            out.resize(width, serde_json::Value::Null);
+            out
+        })
+        .collect();
+    let params = serde_json::json!({
+        "command": "range.setValues",
+        "params": { "range": "A1", "values": values }
+    });
+    app_rpc_call("gridcraft", "engine.execute", &params).is_some()
+}
+
+/// Executes modeling commands directly in the active SolidCraft window via its live control RPC server
+pub fn solidcraft_live_execute_commands(commands: &[serde_json::Value]) -> Result<String, String> {
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::{SocketAddr, TcpStream};
+    use std::time::Duration;
+
+    let port = crate::apps::get_app_control_port("solidcraft").unwrap_or(49166);
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    let mut stream = TcpStream::connect_timeout(&addr, Duration::from_millis(300))
+        .map_err(|e| format!("SolidCraft 제어 포트({port}) 연결 대기: {e}"))?;
+
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(2000)));
+    let _ = stream.set_write_timeout(Some(Duration::from_millis(2000)));
+
+    let mut token = crate::apps::COMMON_CONTROL_TOKEN.to_string();
+    if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+        let token_path = PathBuf::from(local_app_data)
+            .join("SolidCraft")
+            .join("control")
+            .join(format!("{port}.token"));
+        if let Ok(tok) = std::fs::read_to_string(&token_path) {
+            let trimmed = tok.trim();
+            if !trimmed.is_empty() {
+                token = trimmed.to_string();
+            }
+        }
+    }
+
+    let payload = serde_json::json!({
+        "token": token,
+        "id": 1,
+        "method": "engine.batch",
+        "params": {
+            "commands": commands
+        }
+    });
+
+    let msg = format!("{}\n", serde_json::to_string(&payload).unwrap_or_default());
+    stream.write_all(msg.as_bytes())
+        .map_err(|e| format!("명령 전송 실패: {e}"))?;
+
+    let Ok(stream_clone) = stream.try_clone() else {
+        return Err("소켓 복제 실패".to_string());
+    };
+    let mut reader = BufReader::new(stream_clone);
+    let mut line = String::new();
+    reader.read_line(&mut line)
+        .map_err(|e| format!("응답 수신 실패: {e}"))?;
+
+    let parsed: serde_json::Value = serde_json::from_str(&line)
+        .map_err(|e| format!("응답 파싱 실패 ({e}): {line}"))?;
+
+    if parsed.get("ok").and_then(|v| v.as_bool()) == Some(true) {
+        let completed = parsed["result"]["completed"].as_u64().unwrap_or(1);
+        let first_body = parsed["result"]["results"][0]["created_bodies"][0]
+            .as_str()
+            .unwrap_or("Body1");
+        let feature_name = parsed["result"]["results"][0]["name"]
+            .as_str()
+            .unwrap_or("Feature");
+        let ms = parsed["result"]["results"][0]["ms"].as_f64().unwrap_or(0.0);
+        Ok(format!("{completed}개 피처 생성 완료: {feature_name} ({first_body}) [{ms:.1}ms]"))
+    } else {
+        let err = parsed["error"].as_str().unwrap_or("실행 오류");
+        Err(err.to_string())
+    }
+}
+
+fn find_solidcraft_cli(saves_dir: &Path) -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(parent) = saves_dir.parent() {
+        candidates.push(parent.join("apps").join("solidcraft").join("solidcraft-cli.exe"));
+        candidates.push(parent.join("apps").join("solidcraft").join("solidcraft-cli"));
+        if let Some(grand) = parent.parent() {
+            candidates.push(grand.join("dist").join("apps").join("solidcraft").join("solidcraft-cli.exe"));
+            candidates.push(grand.join("apps").join("solidcraft").join("solidcraft-cli.exe"));
+        }
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(parent) = exe.parent() {
+            candidates.push(parent.join("apps").join("solidcraft").join("solidcraft-cli.exe"));
+            candidates.push(parent.join("dist").join("apps").join("solidcraft").join("solidcraft-cli.exe"));
+        }
+    }
+    candidates.push(PathBuf::from("dist/apps/solidcraft/solidcraft-cli.exe"));
+    candidates.push(PathBuf::from("apps/solidcraft/solidcraft-cli.exe"));
+    candidates.into_iter().find(|p| p.is_file())
+}
+
+#[derive(Debug, Clone)]
+pub enum CadCommandSpec {
+    Box { length: f32, width: f32, height: f32 },
+    Cylinder { radius: f32, height: f32 },
+    Sphere { radius: f32 },
+}
+
+fn find_all_numbers(text: &str) -> Vec<(usize, f32, usize)> {
+    let mut out = Vec::new();
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i].is_ascii_digit() {
+            let start = i;
+            while i < bytes.len() && (bytes[i].is_ascii_digit() || bytes[i] == b'.') {
+                i += 1;
+            }
+            if let Ok(num) = std::str::from_utf8(&bytes[start..i]).unwrap_or_default().parse::<f32>() {
+                out.push((start, num, i));
+            }
+        } else {
+            i += 1;
+        }
+    }
+    out
+}
+
+pub fn parse_cad_prompt(prompt: &str) -> CadCommandSpec {
+    let lower = prompt.to_lowercase();
+    let nums = find_all_numbers(&lower);
+
+    // 1. Check for 3 explicit numbers: e.g. "100x100mm 사각형에 50mm 돌출" or "100*100*50"
+    if nums.len() >= 3 {
+        let between_01 = &lower[nums[0].2..nums[1].0];
+        if between_01.contains('x') || between_01.contains('*') || between_01.contains('×') {
+            return CadCommandSpec::Box {
+                length: nums[0].1,
+                width: nums[1].1,
+                height: nums[2].1,
+            };
+        }
+    }
+
+    // 2. Check for 2 explicit numbers
+    if nums.len() == 2 {
+        let between_01 = &lower[nums[0].2..nums[1].0];
+        if between_01.contains('x') || between_01.contains('*') || between_01.contains('×') {
+            return CadCommandSpec::Box {
+                length: nums[0].1,
+                width: nums[1].1,
+                height: 50.0,
+            };
+        }
+        if lower.contains("실린더") || lower.contains("원기둥") || lower.contains("cylinder") {
+            return CadCommandSpec::Cylinder {
+                radius: nums[0].1,
+                height: nums[1].1,
+            };
+        }
+    }
+
+    // 3. Check for 1 number: e.g. "50mm 큐브" or "50mm 돌출"
+    if nums.len() == 1 {
+        let n = nums[0].1;
+        if lower.contains("큐브") || lower.contains("cube") || lower.contains("정육면체") {
+            return CadCommandSpec::Box {
+                length: n,
+                width: n,
+                height: n,
+            };
+        }
+        if lower.contains("돌출") {
+            return CadCommandSpec::Box {
+                length: 100.0,
+                width: 100.0,
+                height: n,
+            };
+        }
+        if lower.contains("구") || lower.contains("sphere") {
+            return CadCommandSpec::Sphere { radius: n };
+        }
+    }
+
+    if lower.contains("실린더") || lower.contains("원기둥") || lower.contains("cylinder") {
+        return CadCommandSpec::Cylinder { radius: 20.0, height: 50.0 };
+    }
+
+    if lower.contains("구") || lower.contains("sphere") {
+        return CadCommandSpec::Sphere { radius: 25.0 };
+    }
+
+    // Default 100 x 100 x 50 mm box
+    CadCommandSpec::Box {
+        length: 100.0,
+        width: 100.0,
+        height: 50.0,
+    }
+}
+
+fn generate_cadcraft_box_obj(length: f32, width: f32, height: f32) -> String {
+    let mut out = String::new();
+    out.push_str("# Wavefront OBJ File generated by SolidCraft AI Assistant\n");
+    out.push_str(&format!("o Box_{length:.0}x{width:.0}x{height:.0}\n"));
+    let hx = length / 2.0;
+    let hy = width / 2.0;
+    let hz = height;
+    let nhx = -hx;
+    let nhy = -hy;
+    out.push_str(&format!("v {nhx:.4} {nhy:.4} {hz:.4}\n"));
+    out.push_str(&format!("v {hx:.4} {nhy:.4} {hz:.4}\n"));
+    out.push_str(&format!("v {nhx:.4} {hy:.4} {hz:.4}\n"));
+    out.push_str(&format!("v {hx:.4} {hy:.4} {hz:.4}\n"));
+    out.push_str(&format!("v {nhx:.4} {hy:.4} 0.0000\n"));
+    out.push_str(&format!("v {hx:.4} {hy:.4} 0.0000\n"));
+    out.push_str(&format!("v {nhx:.4} {nhy:.4} 0.0000\n"));
+    out.push_str(&format!("v {hx:.4} {nhy:.4} 0.0000\n"));
+    out.push_str("vn 0.0000 0.0000 1.0000\n");
+    out.push_str("vn 0.0000 1.0000 0.0000\n");
+    out.push_str("vn 0.0000 0.0000 -1.0000\n");
+    out.push_str("vn 0.0000 -1.0000 0.0000\n");
+    out.push_str("vn 1.0000 0.0000 0.0000\n");
+    out.push_str("vn -1.0000 0.0000 0.0000\n");
+    out.push_str("s 1\n");
+    out.push_str("f 1//1 2//1 4//1 3//1\n");
+    out.push_str("f 3//2 4//2 6//2 5//2\n");
+    out.push_str("f 5//3 6//3 8//3 7//3\n");
+    out.push_str("f 7//4 8//4 2//4 1//4\n");
+    out.push_str("f 2//5 8//5 6//5 4//5\n");
+    out.push_str("f 7//6 1//6 3//6 5//6\n");
+    out
+}
+
+fn generate_cadcraft_cylinder_obj(radius: f32, height: f32) -> String {
+    let mut out = String::new();
+    out.push_str("# Wavefront OBJ File generated by SolidCraft AI Assistant\n");
+    out.push_str(&format!("o Cylinder_{radius:.0}x{height:.0}\n"));
+    let segments = 24;
+    let pi = std::f32::consts::PI;
+    for i in 0..segments {
+        let theta = (i as f32 / segments as f32) * 2.0 * pi;
+        let x = radius * theta.cos();
+        let y = radius * theta.sin();
+        out.push_str(&format!("v {x:.4} {y:.4} 0.0000\n"));
+        out.push_str(&format!("v {x:.4} {y:.4} {height:.4}\n"));
+    }
+    out.push_str("v 0.0000 0.0000 0.0000\n");
+    out.push_str(&format!("v 0.0000 0.0000 {height:.4}\n"));
+    let bot_c = segments * 2 + 1;
+    let top_c = segments * 2 + 2;
+
+    out.push_str("s 1\n");
+    for i in 0..segments {
+        let b1 = i * 2 + 1;
+        let t1 = i * 2 + 2;
+        let b2 = ((i + 1) % segments) * 2 + 1;
+        let t2 = ((i + 1) % segments) * 2 + 2;
+        out.push_str(&format!("f {b1} {b2} {t2} {t1}\n"));
+        out.push_str(&format!("f {bot_c} {b2} {b1}\n"));
+        out.push_str(&format!("f {top_c} {t1} {t2}\n"));
+    }
+    out
+}
+
+fn generate_cadcraft_obj_with_spec(_prompt: &str, spec: &CadCommandSpec) -> String {
+    match spec {
+        CadCommandSpec::Box { length, width, height } => {
+            generate_cadcraft_box_obj(*length, *width, *height)
+        }
+        CadCommandSpec::Cylinder { radius, height } => {
+            generate_cadcraft_cylinder_obj(*radius, *height)
+        }
+        CadCommandSpec::Sphere { radius } => {
+            // Approximated sphere or cube of diameter
+            let d = radius * 2.0;
+            generate_cadcraft_box_obj(d, d, d)
+        }
+    }
 }
 
 fn find_photocraft_cli(saves_dir: &Path) -> Option<PathBuf> {
@@ -1994,10 +2566,19 @@ fn process_ai_request(
         let doc_path = saves_dir.join(&doc_name);
         let content = generate_wordcraft_doc(prompt, timestamp);
         std::fs::write(&doc_path, content).map_err(|e| format!("문서 생성 실패: {e}"))?;
+
+        let injected = live_open_via_rpc("wordcraft", &doc_path);
+
+        let status_desc = if injected {
+            "⚡ 현재 열려 있는 WordCraft 창에 문서가 즉시 로드되었습니다!"
+        } else {
+            "아래 버튼을 누르면 WordCraft에서 즉시 열어 편집할 수 있습니다."
+        };
+
         return Ok((
-            format!("📄 WordCraft 문서 초안이 성공적으로 생성되었습니다!\n- 파일명: {doc_name}\n\n아래 버튼을 누르면 WordCraft에서 즉시 열어 편집할 수 있습니다."),
+            format!("📄 WordCraft 문서 초안이 성공적으로 생성되었습니다!\n- 파일명: {doc_name}\n\n{status_desc}"),
             None,
-            Some(ActionResult::for_file("WordCraft에서 문서 열기", "wordcraft", doc_path, true)),
+            Some(ActionResult::for_file("WordCraft에서 문서 열기", "wordcraft", doc_path, !injected)),
         ));
     }
 
@@ -2007,10 +2588,21 @@ fn process_ai_request(
         let sheet_path = saves_dir.join(&sheet_name);
         let content = generate_gridcraft_csv(prompt);
         std::fs::write(&sheet_path, content).map_err(|e| format!("스프레드시트 생성 실패: {e}"))?;
+
+        // Fill the sheet that is currently open; fall back to opening as a tab of the same instance
+        let injected = gridcraft_live_fill_csv(&std::fs::read_to_string(&sheet_path).unwrap_or_default())
+            || live_open_via_rpc("gridcraft", &sheet_path);
+
+        let status_desc = if injected {
+            "⚡ 현재 열려 있는 GridCraft 창에 스프레드시트가 즉시 로드되었습니다!"
+        } else {
+            "아래 버튼을 누르면 GridCraft에서 즉시 열립니다."
+        };
+
         return Ok((
-            format!("📊 GridCraft 스프레드시트가 성공적으로 생성되었습니다!\n- 파일명: {sheet_name}\n- 수식: SUM, AVERAGE 자동 계산 포함\n\n아래 버튼을 누르면 GridCraft에서 즉시 열립니다."),
+            format!("📊 GridCraft 스프레드시트가 성공적으로 생성되었습니다!\n- 파일명: {sheet_name}\n- 수식: SUM, AVERAGE 자동 계산 포함\n\n{status_desc}"),
             None,
-            Some(ActionResult::for_file("GridCraft에서 시트 열기", "gridcraft", sheet_path, true)),
+            Some(ActionResult::for_file("GridCraft에서 시트 열기", "gridcraft", sheet_path, !injected)),
         ));
     }
 
@@ -2020,10 +2612,19 @@ fn process_ai_request(
         let svg_path = saves_dir.join(&svg_name);
         let content = generate_vectorcraft_svg(prompt);
         std::fs::write(&svg_path, content).map_err(|e| format!("SVG 생성 실패: {e}"))?;
+
+        let injected = live_open_via_rpc("vectorcraft", &svg_path);
+
+        let status_desc = if injected {
+            "⚡ 현재 열려 있는 VectorCraft 창에 SVG가 즉시 로드되었습니다!"
+        } else {
+            "아래 버튼을 누르면 VectorCraft에서 열어 자유롭게 패스를 편집할 수 있습니다."
+        };
+
         return Ok((
-            format!("🎨 VectorCraft용 SVG 벡터 그래픽이 생성되었습니다!\n- 파일명: {svg_name}\n- 표준 Scalable Vector Graphics (.svg)\n\n아래 버튼을 누르면 VectorCraft에서 열어 자유롭게 패스를 편집할 수 있습니다."),
+            format!("🎨 VectorCraft용 SVG 벡터 그래픽이 생성되었습니다!\n- 파일명: {svg_name}\n- 표준 Scalable Vector Graphics (.svg)\n\n{status_desc}"),
             None,
-            Some(ActionResult::for_file("VectorCraft에서 벡터 열기", "vectorcraft", svg_path, true)),
+            Some(ActionResult::for_file("VectorCraft에서 벡터 열기", "vectorcraft", svg_path, !injected)),
         ));
     }
 
@@ -2033,23 +2634,150 @@ fn process_ai_request(
         let deck_path = saves_dir.join(&deck_name);
         let content = generate_deckcraft_deck(prompt);
         std::fs::write(&deck_path, content).map_err(|e| format!("슬라이드 생성 실패: {e}"))?;
+
+        let injected = live_open_via_rpc("deckcraft", &deck_path);
+
+        let status_desc = if injected {
+            "⚡ 현재 열려 있는 DeckCraft 창에 슬라이드가 즉시 로드되었습니다!"
+        } else {
+            "아래 버튼을 누르면 DeckCraft에서 즉시 열립니다."
+        };
+
         return Ok((
-            format!("📽️ DeckCraft 발표 슬라이드 덱이 생성되었습니다!\n- 파일명: {deck_name}\n- 구성: 표지, 문제 정의, 핵심 가치, 비즈니스 모델, Q&A 슬라이드\n\n아래 버튼을 누르면 DeckCraft에서 즉시 열립니다."),
+            format!("📽️ DeckCraft 발표 슬라이드 덱이 생성되었습니다!\n- 파일명: {deck_name}\n- 구성: 표지, 문제 정의, 핵심 가치, 비즈니스 모델, Q&A 슬라이드\n\n{status_desc}"),
             None,
-            Some(ActionResult::for_file("DeckCraft에서 슬라이드 열기", "deckcraft", deck_path, true)),
+            Some(ActionResult::for_file("DeckCraft에서 슬라이드 열기", "deckcraft", deck_path, !injected)),
         ));
     }
 
-    // (5) CADCraft: 3D CAD modeling, geometry, OBJ meshes
-    if target_app_lower == "cadcraft" || prompt_lower.contains("3d") || prompt_lower.contains("cad") || prompt_lower.contains("도면") || prompt_lower.contains("캐드") || prompt_lower.contains("모델링") || prompt_lower.contains("obj") {
-        let obj_name = format!("model3d_{timestamp}.obj");
-        let obj_path = saves_dir.join(&obj_name);
-        let content = generate_cadcraft_obj(prompt);
-        std::fs::write(&obj_path, content).map_err(|e| format!("3D 모델 생성 실패: {e}"))?;
+    // (5) CADCraft / SolidCraft: 3D CAD modeling, geometry, OBJ meshes
+    if target_app_lower == "solidcraft" || target_app_lower == "cadcraft" || prompt_lower.contains("3d") || prompt_lower.contains("cad") || prompt_lower.contains("도면") || prompt_lower.contains("캐드") || prompt_lower.contains("모델링") || prompt_lower.contains("obj") || prompt_lower.contains("돌출") || prompt_lower.contains("사각형") {
+        let app_id = if target_app_lower == "solidcraft" { "solidcraft" } else { "cadcraft" };
+        let app_name = if target_app_lower == "solidcraft" { "SolidCraft" } else { "CADCraft" };
+
+        let cad_spec = parse_cad_prompt(prompt);
+        let (cmd_name, cmd_params, spec_desc) = match &cad_spec {
+            CadCommandSpec::Box { length, width, height } => (
+                "solid.box",
+                serde_json::json!({
+                    "length": format!("{length} mm"),
+                    "width": format!("{width} mm"),
+                    "height": format!("{height} mm")
+                }),
+                format!("{length} × {width} × {height} mm 돌출 솔리드 박스"),
+            ),
+            CadCommandSpec::Cylinder { radius, height } => (
+                "solid.cylinder",
+                serde_json::json!({
+                    "radius": format!("{radius} mm"),
+                    "height": format!("{height} mm")
+                }),
+                format!("반경 {radius} mm × 높이 {height} mm 실린더"),
+            ),
+            CadCommandSpec::Sphere { radius } => (
+                "solid.sphere",
+                serde_json::json!({
+                    "radius": format!("{radius} mm")
+                }),
+                format!("반경 {radius} mm 구"),
+            ),
+        };
+
+        // 1. LIVE EXECUTION: Run directly in the currently active SolidCraft window via RPC
+        let mut live_injected = false;
+        let mut live_summary = String::new();
+        if app_id == "solidcraft" {
+            let cmd_obj = serde_json::json!({
+                "command": cmd_name,
+                "params": cmd_params
+            });
+            match solidcraft_live_execute_commands(&[cmd_obj]) {
+                Ok(summary) => {
+                    live_injected = true;
+                    live_summary = summary;
+                }
+                Err(err) => {
+                    eprintln!("SolidCraft 실시간 명령 실행 안내: {err}");
+                }
+            }
+        }
+
+        // 2. FILE GENERATION & BACKUP: Produce native .solidcraft, .step and .obj
+        let base_name = format!("model3d_{timestamp}");
+        let solidcraft_path = saves_dir.join(format!("{base_name}.solidcraft"));
+        let step_path = saves_dir.join(format!("{base_name}.step"));
+        let obj_path = saves_dir.join(format!("{base_name}.obj"));
+
+        let mut primary_path = obj_path.clone();
+
+        // Write OBJ mesh as base
+        let obj_content = generate_cadcraft_obj_with_spec(prompt, &cad_spec);
+        let _ = std::fs::write(&obj_path, obj_content);
+
+        // If solidcraft-cli is available, compile native B-Rep .solidcraft and .step
+        if let Some(cli_exe) = find_solidcraft_cli(saves_dir) {
+            let script_payload = serde_json::json!({
+                "commands": [
+                    {
+                        "command": cmd_name,
+                        "params": cmd_params
+                    }
+                ]
+            });
+            let script_path = saves_dir.join(format!("_temp_script_{timestamp}.json"));
+            if std::fs::write(&script_path, serde_json::to_string(&script_payload).unwrap_or_default()).is_ok() {
+                let status = std::process::Command::new(&cli_exe)
+                    .args([
+                        "run",
+                        &script_path.to_string_lossy(),
+                        "--save",
+                        &solidcraft_path.to_string_lossy(),
+                        "--out",
+                        &step_path.to_string_lossy(),
+                        "--out",
+                        &obj_path.to_string_lossy(),
+                        "--quiet",
+                    ])
+                    .status();
+                let _ = std::fs::remove_file(&script_path);
+
+                if status.is_ok_and(|s| s.success()) && solidcraft_path.is_file() {
+                    primary_path = solidcraft_path.clone();
+                }
+            }
+        }
+
+        // Auto copy primary path to clipboard
+        CompanionState::copy_text_to_clipboard(&primary_path.to_string_lossy());
+
+        let reply = if live_injected {
+            format!(
+                "⚡ 현재 열려 있는 SolidCraft 작업 화면에 {spec_desc}가 즉시 생성되었습니다!\n\
+                새 창을 띄우지 않고 현재 캔버스에서 마우스 드래그로 바로 회전/확대하거나, 좌측 브라우저(Browser) 및 하단 히스토리 타임라인(Timeline)에서 파라미터를 바로 편집할 수 있습니다.\n\n\
+                • 실시간 엔진 반영: {live_summary}\n\
+                • 설계 파일 백업 완료:\n\
+                   - {}\n\
+                   - {}\n\
+                (파일 경로가 클립보드에 자동 복사되었습니다)",
+                primary_path.file_name().and_then(|n| n.to_str()).unwrap_or_default(),
+                step_path.file_name().and_then(|n| n.to_str()).unwrap_or_default()
+            )
+        } else {
+            format!(
+                "📐 {app_name} 3D 지오메트리 모델이 생성되었습니다!\n\
+                - 규격: {spec_desc}\n\
+                - 파일명: {}\n\
+                - 표준 STEP/OBJ 및 SolidCraft 파라메트릭 CAD 포맷\n\n\
+                아래 버튼을 누르면 {app_name}에서 즉시 열어 작업할 수 있습니다.\n\
+                (파일 경로가 클립보드에 자동 복사되었습니다)",
+                primary_path.file_name().and_then(|n| n.to_str()).unwrap_or_default()
+            )
+        };
+
         return Ok((
-            format!("📐 CADCraft 3D 지오메트리 모델 파일이 생성되었습니다!\n- 파일명: {obj_name}\n- 표준 Wavefront 3D OBJ 포맷\n\n아래 버튼을 누르면 CADCraft에서 즉시 3D 뷰포트로 회전/확대 검토할 수 있습니다."),
+            reply,
             None,
-            Some(ActionResult::for_file("CADCraft에서 3D 모델 열기", "cadcraft", obj_path, true)),
+            Some(ActionResult::for_file(&format!("{app_name}에서 3D 모델 열기"), app_id, primary_path, false)),
         ));
     }
 
@@ -2289,44 +3017,173 @@ fn generate_deckcraft_deck(prompt: &str) -> String {
     )
 }
 
+#[allow(dead_code)]
 fn generate_cadcraft_obj(prompt: &str) -> String {
-    format!(
-        "# Wavefront OBJ File generated by CADCraft AI\n\
-        # Model: {}\n\
-        o Mechanical_Component\n\
-        v -1.000000 -1.000000 1.000000\n\
-        v 1.000000 -1.000000 1.000000\n\
-        v -1.000000 1.000000 1.000000\n\
-        v 1.000000 1.000000 1.000000\n\
-        v -1.000000 1.000000 -1.000000\n\
-        v 1.000000 1.000000 -1.000000\n\
-        v -1.000000 -1.000000 -1.000000\n\
-        v 1.000000 -1.000000 -1.000000\n\
-        # Beveled cylinder top vertices\n\
-        v 0.000000 1.500000 0.000000\n\
-        v 0.707107 1.250000 0.707107\n\
-        v -0.707107 1.250000 0.707107\n\
-        v -0.707107 1.250000 -0.707107\n\
-        v 0.707107 1.250000 -0.707107\n\
-        vn 0.0000 0.0000 1.0000\n\
-        vn 0.0000 1.0000 0.0000\n\
-        vn 0.0000 0.0000 -1.0000\n\
-        vn 0.0000 -1.0000 0.0000\n\
-        vn 1.0000 0.0000 0.0000\n\
-        vn -1.0000 0.0000 0.0000\n\
-        s 1\n\
-        f 1//1 2//1 4//1 3//1\n\
-        f 3//2 4//2 6//2 5//2\n\
-        f 5//3 6//3 8//3 7//3\n\
-        f 7//4 8//4 2//4 1//4\n\
-        f 2//5 8//5 6//5 4//5\n\
-        f 7//6 1//6 3//6 5//6\n\
-        f 9//2 10//2 11//2\n\
-        f 9//2 11//2 12//2\n\
-        f 9//2 12//2 13//2\n\
-        f 9//2 13//2 10//2\n",
-        prompt
-    )
+    let spec = parse_cad_prompt(prompt);
+    generate_cadcraft_obj_with_spec(prompt, &spec)
+}
+
+#[allow(dead_code)]
+fn generate_cadcraft_obj_legacy(prompt: &str) -> String {
+    let lower = prompt.to_lowercase();
+    let mut out = String::new();
+    out.push_str("# Wavefront OBJ File generated by SolidCraft AI Assistant\n");
+
+    // 1. Cube / Box / 육면체
+    if lower.contains("큐브") || lower.contains("정육면체") || lower.contains("상자") || lower.contains("cube") || lower.contains("box") || lower.contains("박스") {
+        out.push_str("o Cube_Solid\n");
+        out.push_str("v -10.0000 -10.0000 10.0000\n");
+        out.push_str("v 10.0000 -10.0000 10.0000\n");
+        out.push_str("v -10.0000 10.0000 10.0000\n");
+        out.push_str("v 10.0000 10.0000 10.0000\n");
+        out.push_str("v -10.0000 10.0000 -10.0000\n");
+        out.push_str("v 10.0000 10.0000 -10.0000\n");
+        out.push_str("v -10.0000 -10.0000 -10.0000\n");
+        out.push_str("v 10.0000 -10.0000 -10.0000\n");
+        out.push_str("vn 0.0000 0.0000 1.0000\n");
+        out.push_str("vn 0.0000 1.0000 0.0000\n");
+        out.push_str("vn 0.0000 0.0000 -1.0000\n");
+        out.push_str("vn 0.0000 -1.0000 0.0000\n");
+        out.push_str("vn 1.0000 0.0000 0.0000\n");
+        out.push_str("vn -1.0000 0.0000 0.0000\n");
+        out.push_str("s 1\n");
+        out.push_str("f 1//1 2//1 4//1 3//1\n");
+        out.push_str("f 3//2 4//2 6//2 5//2\n");
+        out.push_str("f 5//3 6//3 8//3 7//3\n");
+        out.push_str("f 7//4 8//4 2//4 1//4\n");
+        out.push_str("f 2//5 8//5 6//5 4//5\n");
+        out.push_str("f 7//6 1//6 3//6 5//6\n");
+        return out;
+    }
+
+    // 2. Cylinder / 원기둥 / 실린더
+    if lower.contains("실린더") || lower.contains("원기둥") || lower.contains("cylinder") {
+        out.push_str("o Cylinder_Solid\n");
+        let radius = 10.0_f32;
+        let height = 24.0_f32;
+        let segments = 24;
+        let pi = std::f32::consts::PI;
+        for i in 0..segments {
+            let theta = (i as f32 / segments as f32) * 2.0 * pi;
+            let x = radius * theta.cos();
+            let y = radius * theta.sin();
+            out.push_str(&format!("v {x:.4} {y:.4} 0.0000\n"));
+            out.push_str(&format!("v {x:.4} {y:.4} {height:.4}\n"));
+        }
+        out.push_str("v 0.0000 0.0000 0.0000\n");
+        out.push_str(&format!("v 0.0000 0.0000 {height:.4}\n"));
+        let bot_c = segments * 2 + 1;
+        let top_c = segments * 2 + 2;
+
+        out.push_str("s 1\n");
+        for i in 0..segments {
+            let b1 = i * 2 + 1;
+            let t1 = i * 2 + 2;
+            let b2 = ((i + 1) % segments) * 2 + 1;
+            let t2 = ((i + 1) % segments) * 2 + 2;
+            out.push_str(&format!("f {b1} {b2} {t2} {t1}\n"));
+            out.push_str(&format!("f {bot_c} {b2} {b1}\n"));
+            out.push_str(&format!("f {top_c} {t1} {t2}\n"));
+        }
+        return out;
+    }
+
+    // 3. Sphere / 구 / 구체
+    if lower.contains("구체") || lower.contains("구") || lower.contains("sphere") || lower.contains("ball") {
+        out.push_str("o Sphere_Solid\n");
+        let radius = 12.0_f32;
+        let rings = 14;
+        let sectors = 20;
+        let pi = std::f32::consts::PI;
+        for r in 0..=rings {
+            let phi = (r as f32 / rings as f32) * pi;
+            for s in 0..=sectors {
+                let theta = (s as f32 / sectors as f32) * 2.0 * pi;
+                let x = radius * phi.sin() * theta.cos();
+                let y = radius * phi.sin() * theta.sin();
+                let z = radius * phi.cos();
+                out.push_str(&format!("v {x:.4} {y:.4} {z:.4}\n"));
+            }
+        }
+        out.push_str("s 1\n");
+        for r in 0..rings {
+            for s in 0..sectors {
+                let first = (r * (sectors + 1)) + s + 1;
+                let second = first + sectors + 1;
+                out.push_str(&format!("f {first} {second} {} {}\n", second + 1, first + 1));
+            }
+        }
+        return out;
+    }
+
+    // 4. Gear / 톱니바퀴 / 기어
+    if lower.contains("기어") || lower.contains("gear") || lower.contains("톱니") {
+        out.push_str("o Gear_Solid\n");
+        let teeth = 12;
+        let r_in = 8.0_f32;
+        let r_out = 12.0_f32;
+        let thick = 6.0_f32;
+        let pi = std::f32::consts::PI;
+        let steps = teeth * 4;
+        for i in 0..steps {
+            let theta = (i as f32 / steps as f32) * 2.0 * pi;
+            let is_tooth = (i % 4 == 1) || (i % 4 == 2);
+            let r = if is_tooth { r_out } else { r_in };
+            let x = r * theta.cos();
+            let y = r * theta.sin();
+            out.push_str(&format!("v {x:.4} {y:.4} 0.0000\n"));
+            out.push_str(&format!("v {x:.4} {y:.4} {thick:.4}\n"));
+        }
+        out.push_str("v 0.0000 0.0000 0.0000\n");
+        out.push_str(&format!("v 0.0000 0.0000 {thick:.4}\n"));
+        let bot_c = steps * 2 + 1;
+        let top_c = steps * 2 + 2;
+        out.push_str("s 1\n");
+        for i in 0..steps {
+            let b1 = i * 2 + 1;
+            let t1 = i * 2 + 2;
+            let b2 = ((i + 1) % steps) * 2 + 1;
+            let t2 = ((i + 1) % steps) * 2 + 2;
+            out.push_str(&format!("f {b1} {b2} {t2} {t1}\n"));
+            out.push_str(&format!("f {bot_c} {b2} {b1}\n"));
+            out.push_str(&format!("f {top_c} {t1} {t2}\n"));
+        }
+        return out;
+    }
+
+    // 5. Default Mechanical Mounting Bracket Component
+    out.push_str("o Mechanical_Bracket\n");
+    out.push_str("v -10.0000 -10.0000 10.0000\n");
+    out.push_str("v 10.0000 -10.0000 10.0000\n");
+    out.push_str("v -10.0000 10.0000 10.0000\n");
+    out.push_str("v 10.0000 10.0000 10.0000\n");
+    out.push_str("v -10.0000 10.0000 -10.0000\n");
+    out.push_str("v 10.0000 10.0000 -10.0000\n");
+    out.push_str("v -10.0000 -10.0000 -10.0000\n");
+    out.push_str("v 10.0000 -10.0000 -10.0000\n");
+    out.push_str("v 0.0000 15.0000 0.0000\n");
+    out.push_str("v 7.0710 12.5000 7.0710\n");
+    out.push_str("v -7.0710 12.5000 7.0710\n");
+    out.push_str("v -7.0710 12.5000 -7.0710\n");
+    out.push_str("v 7.0710 12.5000 -7.0710\n");
+    out.push_str("vn 0.0000 0.0000 1.0000\n");
+    out.push_str("vn 0.0000 1.0000 0.0000\n");
+    out.push_str("vn 0.0000 0.0000 -1.0000\n");
+    out.push_str("vn 0.0000 -1.0000 0.0000\n");
+    out.push_str("vn 1.0000 0.0000 0.0000\n");
+    out.push_str("vn -1.0000 0.0000 0.0000\n");
+    out.push_str("s 1\n");
+    out.push_str("f 1//1 2//1 4//1 3//1\n");
+    out.push_str("f 3//2 4//2 6//2 5//2\n");
+    out.push_str("f 5//3 6//3 8//3 7//3\n");
+    out.push_str("f 7//4 8//4 2//4 1//4\n");
+    out.push_str("f 2//5 8//5 6//5 4//5\n");
+    out.push_str("f 7//6 1//6 3//6 5//6\n");
+    out.push_str("f 9//2 10//2 11//2\n");
+    out.push_str("f 9//2 11//2 12//2\n");
+    out.push_str("f 9//2 12//2 13//2\n");
+    out.push_str("f 9//2 13//2 10//2\n");
+    out
 }
 
 fn generate_filmcraft_timeline(prompt: &str) -> String {

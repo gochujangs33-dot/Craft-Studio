@@ -37,9 +37,23 @@ Get-ChildItem (Join-Path $dist "apps") -Directory | ForEach-Object {
 }
 $distScripts = Join-Path $dist "scripts"
 New-Item -ItemType Directory -Force $distScripts | Out-Null
-Copy-Item (Join-Path $root "scripts\update-app.ps1") $distScripts -Force
-Copy-Item (Join-Path $root "scripts\rembg_cutout.py") $distScripts -Force -ErrorAction SilentlyContinue
+Get-ChildItem (Join-Path $root "scripts") -File | ForEach-Object {
+    Copy-Item $_.FullName $distScripts -Force
+}
 Copy-Item (Join-Path $root "registry.json") $dist -Force
 Copy-Item (Join-Path $root "version.json") $dist -Force
+
+# Ensure SavedFiles folders exist for all registered apps
+$reg = Get-Content (Join-Path $root "registry.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+$distSaves = Join-Path $dist "SavedFiles"
+New-Item -ItemType Directory -Force $distSaves | Out-Null
+foreach ($app in $reg.apps) {
+    $folderName = $app.prefix + "Craft"
+    if ($app.id -eq "hop") { $folderName = "HopCraft" }
+    New-Item -ItemType Directory -Force (Join-Path $distSaves $folderName) | Out-Null
+}
+
+$oldExe = Join-Path $dist "ArtCraftStudio.exe.old"
+if (Test-Path $oldExe) { Remove-Item $oldExe -Force -ErrorAction SilentlyContinue }
 
 Write-Host "Bundle ready: $dist\ArtCraftStudio.exe"

@@ -66,54 +66,8 @@ $expectedBytes = 0
 
 $repoPath = ($RepoUrl -replace '^https://github.com/', '')
 
-# Tier 0: Direct version.json manifest lookup from raw.githubusercontent.com (No API rate limits!)
-$vjson = Get-RemoteJson "https://raw.githubusercontent.com/$SuiteRepo/main/version.json"
-if ($vjson -and $vjson.apps -and $vjson.apps.$AppId) {
-    $vinfo = $vjson.apps.$AppId
-    $tagCandidate = $vinfo.version
-    $assetCandidate = $vinfo.asset
-    
-    $candUrls = @(
-        "https://github.com/$repoPath/releases/download/v$tagCandidate/$assetCandidate",
-        "https://github.com/$repoPath/releases/download/$tagCandidate/$assetCandidate",
-        "https://github.com/$repoPath/releases/latest/download/$assetCandidate"
-    )
-    foreach ($u in $candUrls) {
-        $code = & curl.exe -s -o NUL -w "%{http_code}" -L --max-time 6 "$u"
-        if ($code -eq "200") {
-            $downloadUrl = $u
-            $latestTag = $tagCandidate
-            $zipName = $assetCandidate
-            Write-Output "PROGRESS:15:매니페스트 기반 직접 다운로드 채널 연결: $zipName (v$latestTag)"
-            break
-        }
-    }
-}
-
-# Tier 1: Suite repository releases (if available)
-if (-not $downloadUrl -and $SuiteRepo) {
-    $suiteRel = Get-RemoteJson "https://api.github.com/repos/$SuiteRepo/releases/latest"
-    if ($suiteRel -and $suiteRel.assets) {
-        $suiteAsset = $suiteRel.assets | Where-Object { 
-            $_.name -like "$AppId-*.zip" -or $_.name -like "$AppId.zip" -or $_.name -like "$AppId-windows*.zip" -or $_.name -like "$AppId*.exe"
-        } | Select-Object -First 1
-
-        if ($suiteAsset) {
-            Write-Output "PROGRESS:15:릴리스 패키지 발견: $($suiteAsset.name)"
-            $downloadUrl = $suiteAsset.browser_download_url
-            $zipName = $suiteAsset.name
-            $expectedBytes = if ($suiteAsset.size) { [int64]$suiteAsset.size } else { 0 }
-            if ($suiteAsset.name -match "$AppId-([0-9\.]+)") {
-                $latestTag = $matches[1]
-            } else {
-                $latestTag = ($suiteRel.tag_name -replace '^v', '')
-            }
-        }
-    }
-}
-
-# Tier 2: Upstream official repo (storytold/<id>)
-if (-not $downloadUrl) {
+# Tier 0: Direct repository releases (Prioritize user-specified / upstream repository $repoPath)
+if ($repoPath) {
     $rel = Get-RemoteJson "https://api.github.com/repos/$repoPath/releases/latest"
     if ($rel -and $rel.assets) {
         $latestTag = ($rel.tag_name -replace '^v', '')
@@ -122,13 +76,64 @@ if (-not $downloadUrl) {
             $asset = $rel.assets | Where-Object { $_.name -like "*windows*.zip" } | Select-Object -First 1
         }
         if (-not $asset) {
+            $asset = $rel.assets | Where-Object { $_.name -like "*.zip" } | Select-Object -First 1
+        }
+        if (-not $asset) {
             $asset = $rel.assets | Where-Object { $_.name -like "*windows*$Arch*.exe" -or $_.name -like "*windows*.exe" -or $_.name -like "*.exe" } | Select-Object -First 1
         }
         if ($asset) {
-            Write-Output "PROGRESS:15:공식 릴리스 패키지 발견: $($asset.name)"
+            Write-Output "PROGRESS:15:저장소 릴리스 패키지 발견: $($asset.name) (v$latestTag)"
             $downloadUrl = $asset.browser_download_url
             $zipName = $asset.name
             $expectedBytes = if ($asset.size) { [int64]$asset.size } else { 0 }
+        }
+    }
+}
+
+# Tier 1: Direct version.json manifest lookup from raw.githubusercontent.com (No API rate limits!)
+if (-not $downloadUrl) {
+    $vjson = Get-RemoteJson "https://raw.githubusercontent.com/$SuiteRepo/main/version.json"
+    if ($vjson -and $vjson.apps -and $vjson.apps.$AppId) {
+        $vinfo = $vjson.apps.$AppId
+        $tagCandidate = $vinfo.version
+        $assetCandidate = $vinfo.asset
+        
+        $candUrls = @(
+            "https://github.com/$repoPath/releases/download/v$tagCandidate/$assetCandidate",
+            "https://github.com/$repoPath/releases/download/$tagCandidate/$assetCandidate",
+            "https://github.com/$repoPath/releases/latest/download/$assetCandidate"
+        )
+        foreach ($u in $candUrls) {
+            $code = & curl.exe -s -o NUL -w "%{http_code}" -L --max-time 6 "$u"
+            if ($code -eq "200") {
+                $downloadUrl = $u
+                $latestTag = $tagCandidate
+                $zipName = $assetCandidate
+                Write-Output "PROGRESS:15:매니페스트 기반 직접 다운로드 채널 연결: $zipName (v$latestTag)"
+                break
+            }
+        }
+    }
+}
+
+# Tier 2: Suite repository releases (if available)
+if (-not $downloadUrl -and $SuiteRepo) {
+    $suiteRel = Get-RemoteJson "https://api.github.com/repos/$SuiteRepo/releases/latest"
+    if ($suiteRel -and $suiteRel.assets) {
+        $suiteAsset = $suiteRel.assets | Where-Object { 
+            $_.name -like "$AppId-*.zip" -or $_.name -like "$AppId.zip" -or $_.name -like "$AppId-windows*.zip" -or $_.name -like "$AppId*.exe"
+        } | Select-Object -First 1
+
+        if ($suiteAsset) {
+            Write-Output "PROGRESS:15:스위트 릴리스 패키지 발견: $($suiteAsset.name)"
+            $downloadUrl = $suiteAsset.browser_download_url
+            $zipName = $suiteAsset.name
+            $expectedBytes = if ($suiteAsset.size) { [int64]$suiteAsset.size } else { 0 }
+            if ($suiteAsset.name -match "$AppId-([0-9\.]+)") {
+                $latestTag = $matches[1]
+            } else {
+                $latestTag = ($suiteRel.tag_name -replace '^v', '')
+            }
         }
     }
 }
@@ -155,6 +160,12 @@ if (-not $downloadUrl) {
 }
 
 if (-not $downloadUrl) {
+    # If a valid local executable already exists in DestDir, safely keep it without failing
+    $existingExe = Get-ChildItem -Path $DestDir -Filter "*.exe" -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($existingExe) {
+        Write-Output "PROGRESS:100:로컬 최신 프로그램(v$latestTag)이 이미 설치되어 있습니다."
+        exit 0
+    }
     Write-Error "GitHub에서 $AppId 릴리스 패키지 다운로드 URL을 찾을 수 없습니다."
     exit 2
 }
@@ -201,14 +212,23 @@ if ($foundLocal) {
         $lastReport = 20
         while (-not $proc.HasExited) {
             Start-Sleep -Milliseconds 350
-            if ((Test-Path $zipPath) -and $expectedBytes -gt 0) {
+            if (Test-Path $zipPath) {
                 $curLen = (Get-Item $zipPath).Length
-                $pct = [math]::Floor(20 + ($curLen / $expectedBytes) * 55)
-                if ($pct -gt $lastReport + 1) {
+                if ($expectedBytes -gt 0) {
+                    $pct = [math]::Floor(20 + ($curLen / $expectedBytes) * 55)
+                } else {
+                    $mb = $curLen / 1MB
+                    $pct = [math]::Min(72, [math]::Floor(20 + $mb * 4))
+                }
+                if ($pct -gt $lastReport) {
                     $lastReport = $pct
                     $mbGot = [math]::Round($curLen / 1MB, 1)
-                    $mbTot = [math]::Round($expectedBytes / 1MB, 1)
-                    Write-Output "PROGRESS:$pct:다운로드 중 ($mbGot MB / $mbTot MB)"
+                    if ($expectedBytes -gt 0) {
+                        $mbTot = [math]::Round($expectedBytes / 1MB, 1)
+                        Write-Output "PROGRESS:$pct:다운로드 중 ($mbGot MB / $mbTot MB)"
+                    } else {
+                        Write-Output "PROGRESS:$pct:다운로드 중 ($mbGot MB)"
+                    }
                 }
             }
         }

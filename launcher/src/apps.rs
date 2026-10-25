@@ -93,18 +93,18 @@ pub fn get_user_registry_path(exe_dir: &Path) -> PathBuf {
 
 /// Loads app registry. Dynamic synchronized registry overrides embedded copy.
 pub fn load_registry(exe_dir: &Path) -> Registry {
-    // 1. Check user application support directory (synced from online)
+    // 1. Check next to executable first (official local release registry)
+    if let Ok(s) = std::fs::read_to_string(exe_dir.join("registry.json")) {
+        match serde_json::from_str::<Registry>(&s) {
+            Ok(r) => return r,
+            Err(e) => log(&format!("registry.json next to exe is invalid: {e}")),
+        }
+    }
+    // 2. Check user application support directory (synced from online)
     let user_reg = get_user_registry_path(exe_dir);
     if let Ok(s) = std::fs::read_to_string(&user_reg) {
         if let Ok(r) = serde_json::from_str::<Registry>(&s) {
             return r;
-        }
-    }
-    // 2. Check next to executable
-    if let Ok(s) = std::fs::read_to_string(exe_dir.join("registry.json")) {
-        match serde_json::from_str(&s) {
-            Ok(r) => return r,
-            Err(e) => log(&format!("registry.json next to exe is invalid, using embedded copy: {e}")),
         }
     }
     // 3. Fallback to embedded copy
@@ -482,9 +482,11 @@ pub fn get_app_control_port(id: &str) -> Option<u16> {
         "deckcraft" => Some(49160),
         "gridcraft" => Some(49161),
         "cadcraft" => Some(49162),
+        "solidcraft" => Some(49166),
         "soundcraft" => Some(49163),
         "figcraft" => Some(49164),
         "hop" => Some(49165),
+        "cutcraft" => Some(49167),
         _ => None,
     }
 }
@@ -682,6 +684,109 @@ pub fn focus_process(_pids: &[u32]) -> bool {
     false
 }
 
+/// Posts a WM_DROPFILES message to target HWND so the file is loaded into the existing window
+#[cfg(windows)]
+#[allow(unsafe_code, dead_code)]
+pub fn post_file_drop_to_window(hwnd: isize, file_path: &Path) -> bool {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Foundation::{HWND, WPARAM};
+    use windows_sys::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GHND};
+    use windows_sys::Win32::UI::Shell::DROPFILES;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{PostMessageW, SetForegroundWindow, WM_DROPFILES};
+
+    let canonical = file_path.canonicalize().unwrap_or_else(|_| file_path.to_path_buf());
+    let mut path_wide: Vec<u16> = canonical.as_os_str().encode_wide().collect();
+    // Drop files string list is double-null terminated
+    path_wide.push(0);
+    path_wide.push(0);
+
+    let dropfiles_size = std::mem::size_of::<DROPFILES>();
+    let total_size = dropfiles_size + path_wide.len() * 2;
+
+    unsafe {
+        let target_hwnd = hwnd as HWND;
+        let hglobal = GlobalAlloc(GHND, total_size);
+        if hglobal.is_null() {
+            return false;
+        }
+        let ptr = GlobalLock(hglobal) as *mut u8;
+        if ptr.is_null() {
+            return false;
+        }
+
+        let df = ptr as *mut DROPFILES;
+        (*df).pFiles = dropfiles_size as u32;
+        (*df).pt.x = 200;
+        (*df).pt.y = 200;
+        (*df).fNC = 0;
+        (*df).fWide = 1;
+
+        let dest_ptr = ptr.add(dropfiles_size) as *mut u16;
+        std::ptr::copy_nonoverlapping(path_wide.as_ptr(), dest_ptr, path_wide.len());
+
+        GlobalUnlock(hglobal);
+
+        SetForegroundWindow(target_hwnd);
+        let res = PostMessageW(target_hwnd, WM_DROPFILES, hglobal as WPARAM, 0);
+        res != 0
+    }
+}
+
+#[cfg(not(windows))]
+pub fn post_file_drop_to_window(_hwnd: isize, _file_path: &Path) -> bool {
+    false
+}
+
+/// Tries to apply/open a file in an already running app instance instead of spawning a new process
+pub fn open_file_in_running_app(app_id: &str, file_path: &Path, _pids: &[u32], _app_name: &str) -> bool {
+    // 1. PhotoCraft live reload RPC if applicable
+    if app_id.eq_ignore_ascii_case("photocraft") {
+        if crate::companion::photocraft_live_reload_document(file_path) {
+            return true;
+        }
+    }
+
+    // 2. Control RPC open command
+    if crate::companion::live_open_via_rpc(app_id, file_path) {
+        #[cfg(windows)]
+        if let Some((hwnd, _)) = get_app_window_info(_pids, _app_name) {
+            unsafe {
+                use windows_sys::Win32::UI::WindowsAndMessaging::{
+                    IsIconic, SetForegroundWindow, ShowWindow, SW_RESTORE,
+                };
+                if IsIconic(hwnd as _) != 0 {
+                    ShowWindow(hwnd as _, SW_RESTORE);
+                }
+                SetForegroundWindow(hwnd as _);
+            }
+        }
+        return true;
+    }
+
+    // 3. Win32 Window message drop + activate existing window
+    #[cfg(windows)]
+    if let Some((hwnd, _)) = get_app_window_info(_pids, _app_name) {
+        unsafe {
+            use windows_sys::Win32::UI::WindowsAndMessaging::{
+                IsIconic, SetForegroundWindow, ShowWindow, SW_RESTORE,
+            };
+            if IsIconic(hwnd as _) != 0 {
+                ShowWindow(hwnd as _, SW_RESTORE);
+            }
+            SetForegroundWindow(hwnd as _);
+        }
+
+        // Post WM_DROPFILES so application loads the file seamlessly
+        post_file_drop_to_window(hwnd, file_path);
+
+        // Copy file path to clipboard as immediate fallback
+        crate::companion::CompanionState::copy_text_to_clipboard(&file_path.to_string_lossy());
+        return true;
+    }
+
+    false
+}
+
 /// Returns (HWND as isize, [left, top, right, bottom]) client area rect in screen coordinates.
 /// Matches by child process PID or top-level window title/executable heuristics.
 #[cfg(windows)]
@@ -778,6 +883,23 @@ pub fn get_app_window_info(pids: &[u32], app_name: &str) -> Option<(isize, [f32;
                             matched = true;
                         }
                     }
+                    "solidcraft" => {
+                        if lower_title.contains("solid")
+                            || lower_title.contains(".solidcraft")
+                            || lower_title.contains(".step")
+                            || lower_title.contains(".stp")
+                        {
+                            matched = true;
+                        }
+                    }
+                    "cadcraft" => {
+                        if lower_title.contains("cad")
+                            || lower_title.contains(".dwg")
+                            || lower_title.contains(".dxf")
+                        {
+                            matched = true;
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -842,25 +964,44 @@ pub fn get_app_window_rect(_pids: &[u32], _app_name: &str) -> Option<[f32; 4]> {
 }
 
 /// Checks if the target app window or companion is currently the foreground window
+#[allow(dead_code)]
 #[cfg(windows)]
 pub fn is_app_or_companion_foreground(target_hwnd: isize, companion_title: &str, pids: &[u32]) -> bool {
     use windows_sys::Win32::Foundation::HWND;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId,
+        GetAncestor, GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId,
+        GA_ROOT, GA_ROOTOWNER,
     };
     unsafe {
         let fg = GetForegroundWindow();
         if fg.is_null() {
             return false;
         }
-        if fg == target_hwnd as HWND {
+        let target = target_hwnd as HWND;
+        if fg == target || GetAncestor(fg, GA_ROOT) == target || GetAncestor(fg, GA_ROOTOWNER) == target {
             return true;
         }
+
         let mut fg_pid = 0u32;
         GetWindowThreadProcessId(fg, &mut fg_pid);
+
+        // Match against target_hwnd's own process ID directly
+        let mut target_pid = 0u32;
+        GetWindowThreadProcessId(target, &mut target_pid);
+        if target_pid != 0 && fg_pid == target_pid {
+            return true;
+        }
+
+        // Match against known child PIDs from runner
         if !pids.is_empty() && pids.contains(&fg_pid) {
             return true;
         }
+
+        // If launcher itself is foreground (e.g. while launching or interacting), keep active
+        if fg_pid == std::process::id() {
+            return true;
+        }
+
         let mut buf = [0u16; 256];
         let len = GetWindowTextW(fg, buf.as_mut_ptr(), buf.len() as i32);
         if len > 0 {
@@ -873,6 +1014,7 @@ pub fn is_app_or_companion_foreground(target_hwnd: isize, companion_title: &str,
     }
 }
 
+#[allow(dead_code)]
 #[cfg(not(windows))]
 pub fn is_app_or_companion_foreground(_target_hwnd: isize, _companion_title: &str, _pids: &[u32]) -> bool {
     true
@@ -901,7 +1043,9 @@ pub fn is_window_iconic(_hwnd_val: isize) -> bool {
 pub fn set_companion_owner(companion_title: &str, target_hwnd_val: isize) {
     use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        EnumWindows, GetWindowLongPtrW, GetWindowTextW, SetWindowLongPtrW, GWLP_HWNDPARENT,
+        EnumWindows, GetWindowLongPtrW, GetWindowTextW, SetWindowLongPtrW, SetWindowPos, ShowWindow,
+        GWLP_HWNDPARENT, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW,
+        SW_SHOWNOACTIVATE,
     };
 
     struct FindCtx {
@@ -915,7 +1059,7 @@ pub fn set_companion_owner(companion_title: &str, target_hwnd_val: isize) {
         let len = GetWindowTextW(hwnd, buf.as_mut_ptr(), buf.len() as i32);
         if len > 0 {
             let title = String::from_utf16_lossy(&buf[..len as usize]);
-            if title == ctx.title {
+            if title == ctx.title || title.starts_with(&ctx.title) {
                 ctx.found = hwnd;
                 return 0; // stop
             }
@@ -934,6 +1078,16 @@ pub fn set_companion_owner(companion_title: &str, target_hwnd_val: isize) {
             let current = GetWindowLongPtrW(ctx.found, GWLP_HWNDPARENT);
             if current != target_hwnd as isize {
                 SetWindowLongPtrW(ctx.found, GWLP_HWNDPARENT, target_hwnd as isize);
+                SetWindowPos(
+                    ctx.found,
+                    std::ptr::null_mut(),
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED,
+                );
+                ShowWindow(ctx.found, SW_SHOWNOACTIVATE);
             }
         }
     }
@@ -941,6 +1095,142 @@ pub fn set_companion_owner(companion_title: &str, target_hwnd_val: isize) {
 
 #[cfg(not(windows))]
 pub fn set_companion_owner(_companion_title: &str, _target_hwnd_val: isize) {}
+
+/// Captures the target window (PrintWindow, so overlapping windows are not included) and measures the
+/// width in physical pixels of its native right-hand sidebar. Returns `Some(0)` when no sidebar is found.
+/// The sidebar's left edge is the left-most full-height vertical colour edge in the right part of the window.
+#[cfg(windows)]
+#[allow(unsafe_code)]
+pub fn detect_native_sidebar_width(target_hwnd_val: isize) -> Option<f32> {
+    use windows_sys::Win32::Foundation::{HWND, RECT};
+    use windows_sys::Win32::Graphics::Gdi::{
+        CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC, GetDIBits, ReleaseDC,
+        SelectObject, BITMAPINFO, BITMAPINFOHEADER, DIB_RGB_COLORS,
+    };
+    use windows_sys::Win32::Storage::Xps::PrintWindow;
+    use windows_sys::Win32::UI::WindowsAndMessaging::GetClientRect;
+
+    if target_hwnd_val == 0 {
+        return None;
+    }
+    let hwnd = target_hwnd_val as HWND;
+    unsafe {
+        let mut rc: RECT = std::mem::zeroed();
+        if GetClientRect(hwnd, &mut rc) == 0 {
+            return None;
+        }
+        let w = (rc.right - rc.left).max(0) as usize;
+        let h = (rc.bottom - rc.top).max(0) as usize;
+        if w < 600 || h < 300 {
+            return None;
+        }
+
+        let screen = GetDC(std::ptr::null_mut());
+        if screen.is_null() {
+            return None;
+        }
+        let mem = CreateCompatibleDC(screen);
+        let bmp = CreateCompatibleBitmap(screen, w as i32, h as i32);
+        if mem.is_null() || bmp.is_null() {
+            if !bmp.is_null() {
+                DeleteObject(bmp);
+            }
+            if !mem.is_null() {
+                DeleteDC(mem);
+            }
+            ReleaseDC(std::ptr::null_mut(), screen);
+            return None;
+        }
+        let old = SelectObject(mem, bmp);
+        // PW_CLIENTONLY (1) | PW_RENDERFULLCONTENT (2)
+        let printed = PrintWindow(hwnd, mem, 3) != 0;
+
+        let mut buf = vec![0u8; w * h * 4];
+        let mut bmi: BITMAPINFO = std::mem::zeroed();
+        bmi.bmiHeader = BITMAPINFOHEADER {
+            biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+            biWidth: w as i32,
+            biHeight: -(h as i32),
+            biPlanes: 1,
+            biBitCount: 32,
+            biCompression: 0,
+            biSizeImage: 0,
+            biXPelsPerMeter: 0,
+            biYPelsPerMeter: 0,
+            biClrUsed: 0,
+            biClrImportant: 0,
+        };
+        let got = GetDIBits(mem, bmp, 0, h as u32, buf.as_mut_ptr() as *mut _, &mut bmi, DIB_RGB_COLORS);
+
+        SelectObject(mem, old);
+        DeleteObject(bmp);
+        DeleteDC(mem);
+        ReleaseDC(std::ptr::null_mut(), screen);
+
+        if !printed || got == 0 {
+            return None;
+        }
+
+        let px = |x: usize, y: usize| -> [i32; 3] {
+            let i = (y * w + x) * 4;
+            [buf[i] as i32, buf[i + 1] as i32, buf[i + 2] as i32]
+        };
+
+        // Rows between the ribbon and the status bar
+        let rows = 48usize;
+        let y0 = h * 25 / 100;
+        let y1 = h * 85 / 100;
+        let ys: Vec<usize> = (0..rows).map(|k| y0 + (y1 - y0) * k / (rows - 1)).collect();
+
+        // The sidebar is between 200px and 560px wide
+        let x_min = w.saturating_sub(560).max(8);
+        let x_max = w.saturating_sub(200);
+        for x in x_min..x_max {
+            let mut hits = 0usize;
+            for &y in &ys {
+                let a = px(x, y);
+                let b = px(x - 3, y);
+                let d = (a[0] - b[0]).abs() + (a[1] - b[1]).abs() + (a[2] - b[2]).abs();
+                if d > 30 {
+                    hits += 1;
+                }
+            }
+            if hits * 100 >= rows * 88 {
+                return Some((w - x) as f32);
+            }
+        }
+        Some(0.0)
+    }
+}
+
+/// Returns the standard native right-hand sidebar width in logical points for each Craft application.
+/// When AI Companion is open, it docks directly to the left of this sidebar so the app's native
+/// properties/layers/inspector panels are never obscured.
+pub fn default_sidebar_width_for_app(app_id: &str) -> f32 {
+    match app_id.to_ascii_lowercase().as_str() {
+        "cadcraft" => 300.0,
+        "solidcraft" => 280.0,
+        "photocraft" => 280.0,
+        "deckcraft" => 300.0,
+        "figcraft" => 280.0,
+        "filmcraft" => 300.0,
+        "vectorcraft" => 280.0,
+        "designcraft" => 280.0,
+        "lightcraft" => 320.0,
+        "wordcraft" => 260.0,
+        "gridcraft" => 260.0,
+        "soundcraft" => 260.0,
+        "pdfcraft" => 260.0,
+        "effectcraft" => 280.0,
+        "hop" => 260.0,
+        _ => 280.0,
+    }
+}
+
+#[cfg(not(windows))]
+pub fn detect_native_sidebar_width(_target_hwnd_val: isize) -> Option<f32> {
+    None
+}
 
 /// Detects if the target app has an open right-side panel (e.g. DeckCraft's Format Shape, PhotoCraft's right panel).
 /// PhotoCraft always has a right panel.
@@ -950,6 +1240,9 @@ pub fn detect_side_menu_open(target_hwnd_val: isize, rect: [f32; 4], ppp: f32, a
     let lower_id = app_id.to_lowercase();
     if lower_id == "photocraft" {
         return true;
+    }
+    if lower_id == "solidcraft" || lower_id == "cadcraft" {
+        return false;
     }
 
     unsafe {
@@ -1023,16 +1316,15 @@ pub struct State {
     pub language: String, // "ko" or "en"
     #[serde(default)]
     pub custom_saves_dir: Option<String>,
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub auto_show_companion: bool,
     #[serde(default)]
     pub gemini_api_key: String,
     #[serde(default)]
     pub ai_provider: u8,
-}
-
-fn default_true() -> bool {
-    true
+    /// Custom user-specified GitHub repos per app (e.g. "myusername/cutcraft")
+    #[serde(default)]
+    pub custom_repos: HashMap<String, String>,
 }
 
 fn default_lang() -> String {
@@ -1048,9 +1340,10 @@ impl Default for State {
             minimize_on_open: false,
             language: "ko".to_string(),
             custom_saves_dir: None,
-            auto_show_companion: true,
+            auto_show_companion: false,
             gemini_api_key: String::new(),
             ai_provider: 0,
+            custom_repos: HashMap::new(),
         }
     }
 }

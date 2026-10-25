@@ -48,8 +48,11 @@ pub struct UpdateManager {
     receiver: Receiver<(String, bool, String)>,
     in_progress: Arc<Mutex<HashSet<String>>>,
     latest_versions: Arc<Mutex<HashMap<String, String>>>,
+    custom_sources: Arc<Mutex<HashMap<String, String>>>,
     progress: Arc<Mutex<HashMap<String, (f32, String)>>>,
     last_results: Arc<Mutex<HashMap<String, (bool, String)>>>,
+    total_targets: Arc<Mutex<usize>>,
+    completed_count: Arc<Mutex<usize>>,
     pub is_checking: bool,
 }
 
@@ -83,10 +86,29 @@ impl UpdateManager {
             receiver,
             in_progress: Arc::new(Mutex::new(HashSet::new())),
             latest_versions: Arc::new(Mutex::new(initial_versions)),
+            custom_sources: Arc::new(Mutex::new(HashMap::new())),
             progress: Arc::new(Mutex::new(HashMap::new())),
             last_results: Arc::new(Mutex::new(HashMap::new())),
+            total_targets: Arc::new(Mutex::new(1)),
+            completed_count: Arc::new(Mutex::new(0)),
             is_checking: false,
         }
+    }
+
+    pub fn start_batch(&self, count: usize) {
+        if let Ok(mut t) = self.total_targets.lock() {
+            *t = count.max(1);
+        }
+        if let Ok(mut c) = self.completed_count.lock() {
+            *c = 0;
+        }
+        if let Ok(mut m) = self.last_results.lock() {
+            m.clear();
+        }
+    }
+
+    pub fn custom_source(&self, app_id: &str) -> Option<String> {
+        self.custom_sources.lock().ok().and_then(|m| m.get(app_id).cloned())
     }
 
     #[allow(dead_code)]
@@ -113,6 +135,9 @@ impl UpdateManager {
         if let Ok(mut m) = self.last_results.lock() {
             m.clear();
         }
+        if let Ok(mut c) = self.completed_count.lock() {
+            *c = 0;
+        }
     }
 
     pub fn get_progress(&self, app_id: &str) -> Option<(f32, String)> {
@@ -120,15 +145,26 @@ impl UpdateManager {
     }
 
     pub fn overall_progress(&self) -> Option<(f32, String)> {
+        let total = self.total_targets.lock().ok().map(|t| *t).unwrap_or(1).max(1);
+        let completed = self.completed_count.lock().ok().map(|c| *c).unwrap_or(0);
+
         if let Ok(m) = self.progress.lock() {
             if m.is_empty() {
+                if completed >= total {
+                    return Some((1.0, "업데이트 완료".to_string()));
+                }
                 return None;
             }
-            let count = m.len() as f32;
-            let sum_pct: f32 = m.values().map(|(p, _)| *p).sum();
-            let avg = sum_pct / count;
-            let first_desc = m.values().next().map(|(_, d)| d.clone()).unwrap_or_default();
-            Some((avg, first_desc))
+            let active_sum: f32 = m.values().map(|(p, _)| *p).sum();
+            let effective = ((completed as f32 + active_sum) / total as f32).clamp(0.01, 1.0);
+            let first_desc = m.values().next().map(|(_, d)| d.clone()).unwrap_or_else(|| "업데이트 처리 중...".to_string());
+            let desc = if total > 1 {
+                let cur_idx = (completed + 1).min(total);
+                format!("[{cur_idx}/{total}] {first_desc}")
+            } else {
+                first_desc
+            };
+            Some((effective, desc))
         } else {
             None
         }
@@ -202,13 +238,14 @@ impl UpdateManager {
         }
     }
 
-    /// Checks GitHub Releases & version.json for all 13 apps in a background thread
-    pub fn check_all_updates(&mut self, _repos: Vec<(String, String)>) {
+    /// Checks GitHub Releases & version.json for all apps in a background thread
+    pub fn check_all_updates(&mut self, repos: Vec<(String, String)>) {
         if self.is_checking {
             return;
         }
         self.is_checking = true;
         let latest_store = Arc::clone(&self.latest_versions);
+        let custom_sources = Arc::clone(&self.custom_sources);
         let tx = self.sender.clone();
         let exe_dir = self._exe_dir.clone();
 
@@ -217,7 +254,35 @@ impl UpdateManager {
             let suite_repo = "gochujangs33-dot/Craft-Studio";
             let user_reg = crate::apps::get_user_registry_path(&exe_dir);
 
-            // Tier 0: Sync remote registry.json so new cards appear automatically
+            // Tier 0: Direct app-specific and custom repository check (e.g. user's own GitHub releases)
+            for (id, repo_url) in &repos {
+                let repo_path = repo_url
+                    .trim_start_matches("https://github.com/")
+                    .trim_start_matches("http://github.com/")
+                    .trim_matches('/');
+                if repo_path.is_empty() || repo_path.eq_ignore_ascii_case(suite_repo) {
+                    continue;
+                }
+                let rel_url = format!("https://api.github.com/repos/{repo_path}/releases/latest");
+                if let Some(rel_json) = fetch_url_string(&rel_url) {
+                    if let Ok(rel) = serde_json::from_str::<serde_json::Value>(&rel_json) {
+                        if let Some(tag) = rel.get("tag_name").and_then(|t| t.as_str()) {
+                            let clean_ver = tag.trim_start_matches('v').to_string();
+                            if clean_ver.chars().next().map_or(false, |c| c.is_ascii_digit()) {
+                                if let Ok(mut map) = latest_store.lock() {
+                                    map.insert(id.clone(), clean_ver.clone());
+                                }
+                                if let Ok(mut sources) = custom_sources.lock() {
+                                    sources.insert(id.clone(), repo_path.to_string());
+                                }
+                                found += 1;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Tier 1: Sync remote registry.json so new cards appear automatically
             let reg_url = format!("https://raw.githubusercontent.com/{suite_repo}/main/registry.json");
             if let Some(reg_json) = fetch_url_string(&reg_url) {
                 if reg_json.starts_with('{') {
@@ -228,13 +293,19 @@ impl UpdateManager {
                 }
             }
 
-            // Tier 1: Check remote version.json manifest
+            // Tier 2: Check remote version.json manifest
             let ver_url = format!("https://raw.githubusercontent.com/{suite_repo}/main/version.json");
             if let Some(ver_json) = fetch_url_string(&ver_url) {
                 if let Ok(v) = serde_json::from_str::<serde_json::Value>(&ver_json) {
                     if let Some(apps) = v.get("apps").and_then(|a| a.as_object()) {
                         if let Ok(mut map) = latest_store.lock() {
                             for (id, val) in apps {
+                                // If already customized from direct repo, don't overwrite with older manifest
+                                if let Ok(sources) = custom_sources.lock() {
+                                    if sources.contains_key(id) {
+                                        continue;
+                                    }
+                                }
                                 if let Some(ver) = val.get("version").and_then(|v| v.as_str()) {
                                     let clean_ver = ver.trim_start_matches('v').to_string();
                                     if let Some(existing) = map.get(id) {
@@ -252,7 +323,7 @@ impl UpdateManager {
                 }
             }
 
-            // Tier 2: Check GitHub Releases latest assets if version.json yielded few results
+            // Tier 3: Check GitHub Releases latest assets if version.json yielded few results
             if found < 5 {
                 let rel_url = format!("https://api.github.com/repos/{suite_repo}/releases/latest");
                 if let Some(rel_json) = fetch_url_string(&rel_url) {
@@ -308,6 +379,7 @@ impl UpdateManager {
         let progress_store = Arc::clone(&self.progress);
         let latest_store = Arc::clone(&self.latest_versions);
         let last_results = Arc::clone(&self.last_results);
+        let completed_count = Arc::clone(&self.completed_count);
         let tx = self.sender.clone();
 
         // Clear previous result for this app
@@ -432,6 +504,12 @@ impl UpdateManager {
                 }
                 None => (false, format!("{app_id} 업데이트 프로세스 실행 실패")),
             };
+
+            if success {
+                if let Ok(mut c) = completed_count.lock() {
+                    *c += 1;
+                }
+            }
 
             if let Ok(mut set) = in_progress.lock() {
                 set.remove(&app_id);
