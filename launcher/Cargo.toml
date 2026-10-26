@@ -1,6 +1,6 @@
 [package]
 name = "artcraft-studio"
-version = "1.0.3"
+version = "1.0.4"
 edition = "2021"
 description = "ArtCraft Studio - one launcher for all 13 open-source Craft apps"
 license = "Apache-2.0"
