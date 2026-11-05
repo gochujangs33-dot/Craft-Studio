@@ -66,8 +66,37 @@ $expectedBytes = 0
 
 $repoPath = ($RepoUrl -replace '^https://github.com/', '')
 
-# Tier 0: Direct repository releases (Prioritize user-specified / upstream repository $repoPath)
-if ($repoPath) {
+# Tier 0: Direct version.json manifest lookup from raw.githubusercontent.com (Immune to API rate limits!)
+if (-not $downloadUrl) {
+    $vjson = Get-RemoteJson "https://raw.githubusercontent.com/$SuiteRepo/main/version.json"
+    if ($vjson -and $vjson.apps -and $vjson.apps.$AppId) {
+        $vinfo = $vjson.apps.$AppId
+        $tagCandidate = $vinfo.version
+        $assetCandidate = $vinfo.asset
+        
+        $candUrls = @(
+            "https://github.com/$repoPath/releases/download/v$tagCandidate/$assetCandidate",
+            "https://github.com/$repoPath/releases/download/$tagCandidate/$assetCandidate",
+            "https://github.com/$repoPath/releases/latest/download/$assetCandidate",
+            "https://github.com/$SuiteRepo/releases/download/v$tagCandidate/$assetCandidate",
+            "https://github.com/$SuiteRepo/releases/download/$tagCandidate/$assetCandidate",
+            "https://github.com/$SuiteRepo/releases/latest/download/$assetCandidate"
+        )
+        foreach ($u in $candUrls) {
+            $code = & curl.exe -k -s -L -w "%{http_code}" "$u" -o NUL --max-time 8
+            if ($code -eq "200") {
+                $downloadUrl = $u
+                $latestTag = $tagCandidate
+                $zipName = $assetCandidate
+                Write-Output "PROGRESS:15:매니페스트 기반 직접 다운로드 채널 연결: $zipName (v$latestTag)"
+                break
+            }
+        }
+    }
+}
+
+# Tier 1: Direct repository releases (Prioritize user-specified / upstream repository $repoPath)
+if (-not $downloadUrl -and $repoPath) {
     $rel = Get-RemoteJson "https://api.github.com/repos/$repoPath/releases/latest"
     if ($rel -and $rel.assets) {
         $latestTag = ($rel.tag_name -replace '^v', '')
@@ -86,32 +115,6 @@ if ($repoPath) {
             $downloadUrl = $asset.browser_download_url
             $zipName = $asset.name
             $expectedBytes = if ($asset.size) { [int64]$asset.size } else { 0 }
-        }
-    }
-}
-
-# Tier 1: Direct version.json manifest lookup from raw.githubusercontent.com (No API rate limits!)
-if (-not $downloadUrl) {
-    $vjson = Get-RemoteJson "https://raw.githubusercontent.com/$SuiteRepo/main/version.json"
-    if ($vjson -and $vjson.apps -and $vjson.apps.$AppId) {
-        $vinfo = $vjson.apps.$AppId
-        $tagCandidate = $vinfo.version
-        $assetCandidate = $vinfo.asset
-        
-        $candUrls = @(
-            "https://github.com/$repoPath/releases/download/v$tagCandidate/$assetCandidate",
-            "https://github.com/$repoPath/releases/download/$tagCandidate/$assetCandidate",
-            "https://github.com/$repoPath/releases/latest/download/$assetCandidate"
-        )
-        foreach ($u in $candUrls) {
-            $code = & curl.exe -s -o NUL -w "%{http_code}" -L --max-time 6 "$u"
-            if ($code -eq "200") {
-                $downloadUrl = $u
-                $latestTag = $tagCandidate
-                $zipName = $assetCandidate
-                Write-Output "PROGRESS:15:매니페스트 기반 직접 다운로드 채널 연결: $zipName (v$latestTag)"
-                break
-            }
         }
     }
 }
@@ -147,15 +150,19 @@ if (-not $downloadUrl) {
         "$AppId-windows-x64.exe",
         "HOP-windows-x64.exe"
     )
-    foreach ($fa in $fallbackAssets) {
-        $testUrl = "https://github.com/$repoPath/releases/latest/download/$fa"
-        $code = & curl.exe -s -o NUL -w "%{http_code}" -L --max-time 6 "$testUrl"
-        if ($code -eq "200") {
-            $downloadUrl = $testUrl
-            $zipName = $fa
-            Write-Output "PROGRESS:15:직접 자산 프로브 연결 성공: $zipName"
-            break
+    $probeRepos = @($repoPath, $SuiteRepo) | Where-Object { $_ } | Select-Object -Unique
+    foreach ($r in $probeRepos) {
+        foreach ($fa in $fallbackAssets) {
+            $testUrl = "https://github.com/$r/releases/latest/download/$fa"
+            $code = & curl.exe -k -s -L -w "%{http_code}" "$testUrl" -o NUL --max-time 8
+            if ($code -eq "200") {
+                $downloadUrl = $testUrl
+                $zipName = $fa
+                Write-Output "PROGRESS:15:직접 자산 프로브 연결 성공: $zipName"
+                break
+            }
         }
+        if ($downloadUrl) { break }
     }
 }
 
@@ -166,7 +173,7 @@ if (-not $downloadUrl) {
         Write-Output "PROGRESS:100:로컬 최신 프로그램(v$latestTag)이 이미 설치되어 있습니다."
         exit 0
     }
-    Write-Error "GitHub에서 $AppId 릴리스 패키지 다운로드 URL을 찾을 수 없습니다."
+    [Console]::Error.WriteLine("GitHub에서 $AppId 릴리스 패키지 다운로드 URL을 찾을 수 없습니다.")
     exit 2
 }
 

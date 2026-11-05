@@ -19,6 +19,8 @@ pub struct Registry {
 pub struct AppMeta {
     pub id: String,
     pub prefix: String,
+    #[serde(default)]
+    pub name: Option<String>,
     pub group: String,
     pub order: u32,
     pub tagline: String,
@@ -48,7 +50,21 @@ pub struct AppMeta {
 
 impl AppMeta {
     pub fn name(&self) -> String {
-        format!("{}Craft", self.prefix)
+        if let Some(ref n) = self.name {
+            n.clone()
+        } else {
+            format!("{}Craft", self.prefix)
+        }
+    }
+
+    pub fn display_parts(&self) -> (String, String) {
+        if let Some(ref n) = self.name {
+            if let Some((first, second)) = n.split_once(' ') {
+                return (format!("{first} "), second.to_string());
+            }
+            return (n.clone(), String::new());
+        }
+        (self.prefix.clone(), "Craft".to_string())
     }
 
     pub fn tagline<'a>(&'a self, lang: &str) -> &'a str {
@@ -487,6 +503,8 @@ pub fn get_app_control_port(id: &str) -> Option<u16> {
         "figcraft" => Some(49164),
         "hop" => Some(49165),
         "cutcraft" => Some(49167),
+        "texturecraft" => Some(49168),
+        "materialcraft" => Some(49169),
         _ => None,
     }
 }
@@ -820,6 +838,9 @@ pub fn get_app_window_info(pids: &[u32], app_name: &str) -> Option<(isize, [f32;
 
         let mut pid = 0u32;
         GetWindowThreadProcessId(hwnd, &mut pid);
+        if pid == std::process::id() {
+            return 1;
+        }
 
         let mut buf = [0u16; 512];
         let len = GetWindowTextW(hwnd, buf.as_mut_ptr(), buf.len() as i32);
@@ -832,6 +853,8 @@ pub fn get_app_window_info(pids: &[u32], app_name: &str) -> Option<(isize, [f32;
         let lower_title = title.to_lowercase();
         // Ignore AI companion viewports or ArtCraft Studio launcher
         if lower_title.ends_with(" ai")
+            || lower_title.ends_with(" assistant")
+            || lower_title.ends_with(" toolbar")
             || lower_title.contains("ai 도우미")
             || lower_title.contains("artcraft studio")
         {
@@ -948,6 +971,7 @@ pub fn get_app_window_info(pids: &[u32], app_name: &str) -> Option<(isize, [f32;
 }
 
 /// Returns the [left, top, right, bottom] screen rect of a running app window's client area.
+#[allow(dead_code)]
 #[cfg(windows)]
 pub fn get_app_window_rect(pids: &[u32], app_name: &str) -> Option<[f32; 4]> {
     get_app_window_info(pids, app_name).map(|(_, r)| r)
@@ -958,6 +982,7 @@ pub fn get_app_window_info(_pids: &[u32], _app_name: &str) -> Option<(isize, [f3
     None
 }
 
+#[allow(dead_code)]
 #[cfg(not(windows))]
 pub fn get_app_window_rect(_pids: &[u32], _app_name: &str) -> Option<[f32; 4]> {
     None
@@ -1039,22 +1064,29 @@ pub fn is_window_iconic(_hwnd_val: isize) -> bool {
 }
 
 /// Links the companion window to the target app as an owned window (GWLP_HWNDPARENT)
+#[allow(dead_code)]
 #[cfg(windows)]
 pub fn set_companion_owner(companion_title: &str, target_hwnd_val: isize) {
     use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        EnumWindows, GetWindowLongPtrW, GetWindowTextW, SetWindowLongPtrW, SetWindowPos, ShowWindow,
-        GWLP_HWNDPARENT, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW,
-        SW_SHOWNOACTIVATE,
+        EnumWindows, GetWindowLongPtrW, GetWindowTextW, GetWindowThreadProcessId, SetWindowLongPtrW,
+        SetWindowPos, ShowWindow, GWLP_HWNDPARENT, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
+        SWP_NOSIZE, SWP_SHOWWINDOW, SW_SHOWNOACTIVATE,
     };
 
     struct FindCtx {
         title: String,
+        self_pid: u32,
         found: HWND,
     }
 
     unsafe extern "system" fn enum_cb(hwnd: HWND, lp: LPARAM) -> BOOL {
         let ctx = &mut *(lp as *mut FindCtx);
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(hwnd, &mut pid);
+        if pid != ctx.self_pid {
+            return 1;
+        }
         let mut buf = [0u16; 256];
         let len = GetWindowTextW(hwnd, buf.as_mut_ptr(), buf.len() as i32);
         if len > 0 {
@@ -1069,6 +1101,7 @@ pub fn set_companion_owner(companion_title: &str, target_hwnd_val: isize) {
 
     let mut ctx = FindCtx {
         title: companion_title.to_string(),
+        self_pid: std::process::id(),
         found: std::ptr::null_mut(),
     };
     unsafe {
@@ -1087,8 +1120,8 @@ pub fn set_companion_owner(companion_title: &str, target_hwnd_val: isize) {
                     0,
                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED,
                 );
-                ShowWindow(ctx.found, SW_SHOWNOACTIVATE);
             }
+            ShowWindow(ctx.found, SW_SHOWNOACTIVATE);
         }
     }
 }
@@ -1096,11 +1129,328 @@ pub fn set_companion_owner(companion_title: &str, target_hwnd_val: isize) {
 #[cfg(not(windows))]
 pub fn set_companion_owner(_companion_title: &str, _target_hwnd_val: isize) {}
 
+/// Synchronizes the exact Win32 position, size, owner, and visibility of a companion/toolbar viewport
+#[cfg(windows)]
+pub fn sync_companion_window(
+    companion_title: &str,
+    target_hwnd_val: isize,
+    visible: bool,
+    x_px: i32,
+    y_px: i32,
+    w_px: i32,
+    h_px: i32,
+) {
+    use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM, RECT};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GetWindowLongPtrW, GetWindowRect, GetWindowTextW, GetWindowThreadProcessId,
+        IsWindowVisible, SetWindowLongPtrW, SetWindowPos, ShowWindow, GWLP_HWNDPARENT,
+        SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOZORDER, SWP_SHOWWINDOW, SW_HIDE, SW_SHOWNOACTIVATE,
+    };
+
+    struct FindCtx {
+        title: String,
+        self_pid: u32,
+        found: HWND,
+    }
+
+    unsafe extern "system" fn enum_cb(hwnd: HWND, lp: LPARAM) -> BOOL {
+        let ctx = &mut *(lp as *mut FindCtx);
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(hwnd, &mut pid);
+        if pid != ctx.self_pid {
+            return 1;
+        }
+        let mut buf = [0u16; 256];
+        let len = GetWindowTextW(hwnd, buf.as_mut_ptr(), buf.len() as i32);
+        if len > 0 {
+            let title = String::from_utf16_lossy(&buf[..len as usize]);
+            if title == ctx.title {
+                ctx.found = hwnd;
+                return 0;
+            }
+        }
+        1
+    }
+
+    let mut ctx = FindCtx {
+        title: companion_title.to_string(),
+        self_pid: std::process::id(),
+        found: std::ptr::null_mut(),
+    };
+
+    unsafe {
+        EnumWindows(Some(enum_cb), &mut ctx as *mut FindCtx as LPARAM);
+        if ctx.found.is_null() {
+            return;
+        }
+
+        if target_hwnd_val != 0 {
+            let target_hwnd = target_hwnd_val as HWND;
+            let current = GetWindowLongPtrW(ctx.found, GWLP_HWNDPARENT);
+            if current != target_hwnd as isize {
+                SetWindowLongPtrW(ctx.found, GWLP_HWNDPARENT, target_hwnd as isize);
+            }
+        }
+
+        if !visible {
+            if IsWindowVisible(ctx.found) != 0 {
+                ShowWindow(ctx.found, SW_HIDE);
+            }
+            return;
+        }
+
+        if IsWindowVisible(ctx.found) == 0 {
+            ShowWindow(ctx.found, SW_SHOWNOACTIVATE);
+        }
+
+        let mut rc: RECT = std::mem::zeroed();
+        let need_move = if GetWindowRect(ctx.found, &mut rc) != 0 {
+            (rc.left - x_px).abs() > 1
+                || (rc.top - y_px).abs() > 1
+                || ((rc.right - rc.left) - w_px).abs() > 1
+                || ((rc.bottom - rc.top) - h_px).abs() > 1
+        } else {
+            true
+        };
+
+        if need_move {
+            SetWindowPos(
+                ctx.found,
+                std::ptr::null_mut(),
+                x_px,
+                y_px,
+                w_px.max(1),
+                h_px.max(1),
+                SWP_NOACTIVATE | SWP_NOZORDER | SWP_SHOWWINDOW | SWP_FRAMECHANGED,
+            );
+        }
+    }
+}
+
+#[cfg(not(windows))]
+pub fn sync_companion_window(
+    _companion_title: &str,
+    _target_hwnd_val: isize,
+    _visible: bool,
+    _x_px: i32,
+    _y_px: i32,
+    _w_px: i32,
+    _h_px: i32,
+) {
+}
+
+/// Resizes the target application window side-by-side when the Assistant panel is open so that
+/// the Assistant docks cleanly on the far right without covering the app's native right sidebar
+/// (e.g. PhotoCraft's Color / Properties / Layers panels). Restores the window when Assistant closes.
+/// Returns `(app_client_rect_px, dock_screen_rect_px)`.
+#[cfg(windows)]
+pub fn apply_window_split_dock(
+    target_hwnd_val: isize,
+    dock_w_px: i32,
+    want_split: bool,
+    fallback_rect: [f32; 4],
+) -> ([f32; 4], [f32; 4]) {
+    use std::sync::{Mutex, OnceLock};
+    use windows_sys::Win32::Foundation::{HWND, POINT, RECT};
+    use windows_sys::Win32::Graphics::Gdi::{
+        ClientToScreen, GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    };
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetClientRect, GetWindowRect, IsIconic, IsWindowVisible, IsZoomed, SetWindowPos, ShowWindow,
+        SWP_NOACTIVATE, SWP_NOZORDER, SW_MAXIMIZE, SW_RESTORE,
+    };
+
+    #[derive(Clone, Copy)]
+    struct SplitWinState {
+        is_split: bool,
+        was_maximized: bool,
+        orig_rect: [i32; 4],
+    }
+
+    static SPLIT_MAP: OnceLock<Mutex<HashMap<isize, SplitWinState>>> = OnceLock::new();
+    let map_mutex = SPLIT_MAP.get_or_init(|| Mutex::new(HashMap::new()));
+
+    if target_hwnd_val == 0 {
+        let r = fallback_rect;
+        return (r, [r[2] - dock_w_px as f32, r[1], r[2], r[3]]);
+    }
+
+    let hwnd = target_hwnd_val as HWND;
+    unsafe {
+        if IsWindowVisible(hwnd) == 0 || IsIconic(hwnd) != 0 {
+            let r = fallback_rect;
+            return (r, [r[2] - dock_w_px as f32, r[1], r[2], r[3]]);
+        }
+
+        // Query monitor work area
+        let hmon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+        let mut mi: MONITORINFO = std::mem::zeroed();
+        mi.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+        let work_rc = if !hmon.is_null() && GetMonitorInfoW(hmon, &mut mi) != 0 {
+            mi.rcWork
+        } else {
+            RECT {
+                left: 0,
+                top: 0,
+                right: 1920,
+                bottom: 1040,
+            }
+        };
+
+        let mut win_rc: RECT = std::mem::zeroed();
+        GetWindowRect(hwnd, &mut win_rc);
+
+        let mut map = map_mutex.lock().unwrap();
+
+        if want_split {
+            let entry = map.entry(target_hwnd_val).or_insert(SplitWinState {
+                is_split: false,
+                was_maximized: IsZoomed(hwnd) != 0,
+                orig_rect: [win_rc.left, win_rc.top, win_rc.right, win_rc.bottom],
+            });
+
+            if !entry.is_split {
+                entry.was_maximized = IsZoomed(hwnd) != 0;
+                entry.orig_rect = [win_rc.left, win_rc.top, win_rc.right, win_rc.bottom];
+                entry.is_split = true;
+            }
+
+            if IsZoomed(hwnd) != 0 {
+                entry.was_maximized = true;
+                ShowWindow(hwnd, SW_RESTORE);
+                GetWindowRect(hwnd, &mut win_rc);
+            }
+
+            let mut cli_rc: RECT = std::mem::zeroed();
+            GetClientRect(hwnd, &mut cli_rc);
+            let mut pt = POINT { x: 0, y: 0 };
+            ClientToScreen(hwnd, &mut pt);
+            let cli_left = pt.x;
+            let _cli_top = pt.y;
+            let cli_right = pt.x + (cli_rc.right - cli_rc.left);
+            let cli_bottom = pt.y + (cli_rc.bottom - cli_rc.top);
+
+            let pad_left = (cli_left - win_rc.left).max(0);
+            let pad_right = (win_rc.right - cli_right).max(0);
+            let pad_bottom = (win_rc.bottom - cli_bottom).max(0);
+
+            let max_app_right = work_rc.right - dock_w_px;
+            if entry.was_maximized || cli_right > max_app_right {
+                let target_left = if entry.was_maximized {
+                    work_rc.left
+                } else {
+                    cli_left.min(max_app_right - 500).max(work_rc.left)
+                };
+                let target_top = if entry.was_maximized {
+                    work_rc.top
+                } else {
+                    win_rc.top.max(work_rc.top)
+                };
+                let target_right = max_app_right;
+                let target_bottom = if entry.was_maximized {
+                    work_rc.bottom
+                } else {
+                    cli_bottom.min(work_rc.bottom)
+                };
+
+                let new_win_x = target_left - pad_left;
+                let new_win_y = target_top;
+                let new_win_w = (target_right - target_left) + pad_left + pad_right;
+                let new_win_h = (target_bottom - target_top) + pad_bottom;
+
+                if (win_rc.left - new_win_x).abs() > 2
+                    || (win_rc.top - new_win_y).abs() > 2
+                    || ((win_rc.right - win_rc.left) - new_win_w).abs() > 2
+                    || ((win_rc.bottom - win_rc.top) - new_win_h).abs() > 2
+                {
+                    SetWindowPos(
+                        hwnd,
+                        std::ptr::null_mut(),
+                        new_win_x,
+                        new_win_y,
+                        new_win_w,
+                        new_win_h,
+                        SWP_NOZORDER | SWP_NOACTIVATE,
+                    );
+                }
+            }
+
+            // Re-query updated client rect after potential resize
+            GetWindowRect(hwnd, &mut win_rc);
+            GetClientRect(hwnd, &mut cli_rc);
+            let mut pt2 = POINT { x: 0, y: 0 };
+            ClientToScreen(hwnd, &mut pt2);
+            let c_left = pt2.x as f32;
+            let c_top = pt2.y as f32;
+            let c_right = (pt2.x + (cli_rc.right - cli_rc.left)) as f32;
+            let c_bottom = (pt2.y + (cli_rc.bottom - cli_rc.top)) as f32;
+
+            let dock_left = c_right;
+            let dock_top = if entry.was_maximized {
+                work_rc.top as f32
+            } else {
+                c_top
+            };
+            let dock_right = c_right + (dock_w_px as f32);
+            let dock_bottom = if entry.was_maximized {
+                work_rc.bottom as f32
+            } else {
+                c_bottom
+            };
+
+            ([c_left, c_top, c_right, c_bottom], [dock_left, dock_top, dock_right, dock_bottom])
+        } else {
+            if let Some(entry) = map.get_mut(&target_hwnd_val) {
+                if entry.is_split {
+                    entry.is_split = false;
+                    if entry.was_maximized {
+                        ShowWindow(hwnd, SW_MAXIMIZE);
+                    } else {
+                        let [ox, oy, or, ob] = entry.orig_rect;
+                        SetWindowPos(
+                            hwnd,
+                            std::ptr::null_mut(),
+                            ox,
+                            oy,
+                            (or - ox).max(400),
+                            (ob - oy).max(300),
+                            SWP_NOZORDER | SWP_NOACTIVATE,
+                        );
+                    }
+                }
+            }
+
+            let mut cli_rc: RECT = std::mem::zeroed();
+            GetClientRect(hwnd, &mut cli_rc);
+            let mut pt = POINT { x: 0, y: 0 };
+            ClientToScreen(hwnd, &mut pt);
+            let c_left = pt.x as f32;
+            let c_top = pt.y as f32;
+            let c_right = (pt.x + (cli_rc.right - cli_rc.left)) as f32;
+            let c_bottom = (pt.y + (cli_rc.bottom - cli_rc.top)) as f32;
+
+            ([c_left, c_top, c_right, c_bottom], [-15000.0, -15000.0, -14680.0, -14800.0])
+        }
+    }
+}
+
+#[cfg(not(windows))]
+pub fn apply_window_split_dock(
+    _target_hwnd_val: isize,
+    dock_w_px: i32,
+    _want_split: bool,
+    fallback_rect: [f32; 4],
+) -> ([f32; 4], [f32; 4]) {
+    let r = fallback_rect;
+    (r, [r[2] - dock_w_px as f32, r[1], r[2], r[3]])
+}
+
 /// Captures the target window (PrintWindow, so overlapping windows are not included) and measures the
 /// width in physical pixels of its native right-hand sidebar. Returns `Some(0)` when no sidebar is found.
 /// The sidebar's left edge is the left-most full-height vertical colour edge in the right part of the window.
 #[cfg(windows)]
 #[allow(unsafe_code)]
+#[allow(dead_code)]
 pub fn detect_native_sidebar_width(target_hwnd_val: isize) -> Option<f32> {
     use windows_sys::Win32::Foundation::{HWND, RECT};
     use windows_sys::Win32::Graphics::Gdi::{
@@ -1206,6 +1556,7 @@ pub fn detect_native_sidebar_width(target_hwnd_val: isize) -> Option<f32> {
 /// Returns the standard native right-hand sidebar width in logical points for each Craft application.
 /// When AI Companion is open, it docks directly to the left of this sidebar so the app's native
 /// properties/layers/inspector panels are never obscured.
+#[allow(dead_code)]
 pub fn default_sidebar_width_for_app(app_id: &str) -> f32 {
     match app_id.to_ascii_lowercase().as_str() {
         "cadcraft" => 300.0,
@@ -1228,6 +1579,7 @@ pub fn default_sidebar_width_for_app(app_id: &str) -> f32 {
 }
 
 #[cfg(not(windows))]
+#[allow(dead_code)]
 pub fn detect_native_sidebar_width(_target_hwnd_val: isize) -> Option<f32> {
     None
 }
@@ -1236,6 +1588,7 @@ pub fn detect_native_sidebar_width(_target_hwnd_val: isize) -> Option<f32> {
 /// PhotoCraft always has a right panel.
 /// DeckCraft is detected via Win32 GetPixel inspection near (right - 150, top + 140) and border at (right - 288).
 #[cfg(windows)]
+#[allow(dead_code)]
 pub fn detect_side_menu_open(target_hwnd_val: isize, rect: [f32; 4], ppp: f32, app_id: &str) -> bool {
     let lower_id = app_id.to_lowercase();
     if lower_id == "photocraft" {
@@ -1295,8 +1648,167 @@ pub fn detect_side_menu_open(target_hwnd_val: isize, rect: [f32; 4], ppp: f32, a
 }
 
 #[cfg(not(windows))]
+#[allow(dead_code)]
 pub fn detect_side_menu_open(_target_hwnd_val: isize, _rect: [f32; 4], _ppp: f32, app_id: &str) -> bool {
     app_id.eq_ignore_ascii_case("photocraft")
+}
+
+/// Detects rising edge of Ctrl + Shift + A shortcut globally
+#[cfg(windows)]
+pub fn check_ctrl_shift_a_edge() -> bool {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_CONTROL, VK_SHIFT};
+    static WAS_DOWN: AtomicBool = AtomicBool::new(false);
+    unsafe {
+        let ctrl = (GetAsyncKeyState(VK_CONTROL as i32) as u16 & 0x8000) != 0;
+        let shift = (GetAsyncKeyState(VK_SHIFT as i32) as u16 & 0x8000) != 0;
+        let a_key = (GetAsyncKeyState(0x41) as u16 & 0x8000) != 0;
+        let is_down = ctrl && shift && a_key;
+        let prev = WAS_DOWN.swap(is_down, Ordering::SeqCst);
+        is_down && !prev
+    }
+}
+
+#[cfg(not(windows))]
+pub fn check_ctrl_shift_a_edge() -> bool {
+    false
+}
+
+/// Checks if the foreground window specifically belongs to this target app or its Assistant/Toolbar viewport
+#[cfg(windows)]
+pub fn is_specific_app_foreground(target_hwnd: isize, app_name: &str, pids: &[u32]) -> bool {
+    use windows_sys::Win32::Foundation::HWND;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetAncestor, GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId,
+        GA_ROOT, GA_ROOTOWNER,
+    };
+    unsafe {
+        let fg = GetForegroundWindow();
+        if fg.is_null() {
+            return false;
+        }
+        let target = target_hwnd as HWND;
+        if fg == target || GetAncestor(fg, GA_ROOT) == target || GetAncestor(fg, GA_ROOTOWNER) == target {
+            return true;
+        }
+
+        let mut fg_pid = 0u32;
+        GetWindowThreadProcessId(fg, &mut fg_pid);
+
+        let mut target_pid = 0u32;
+        GetWindowThreadProcessId(target, &mut target_pid);
+        if target_pid != 0 && fg_pid == target_pid {
+            return true;
+        }
+
+        if !pids.is_empty() && pids.contains(&fg_pid) {
+            return true;
+        }
+
+        let mut buf = [0u16; 256];
+        let len = GetWindowTextW(fg, buf.as_mut_ptr(), buf.len() as i32);
+        if len > 0 {
+            let title = String::from_utf16_lossy(&buf[..len as usize]);
+            let prefix1 = format!("{app_name} AI");
+            let prefix2 = format!("{app_name} Assistant");
+            let prefix3 = format!("{app_name} Toolbar");
+            if title.starts_with(&prefix1) || title.starts_with(&prefix2) || title.starts_with(&prefix3) {
+                return true;
+            }
+        }
+        false
+    }
+}
+
+#[cfg(not(windows))]
+pub fn is_specific_app_foreground(_target_hwnd: isize, _app_name: &str, _pids: &[u32]) -> bool {
+    true
+}
+
+/// Captures the target application's live client viewport into an RgbaImage (for Attach View feature)
+#[cfg(windows)]
+pub fn capture_app_viewport(target_hwnd_val: isize) -> Option<image::RgbaImage> {
+    use windows_sys::Win32::Foundation::{HWND, RECT};
+    use windows_sys::Win32::Graphics::Gdi::{
+        CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC, GetDIBits, ReleaseDC,
+        SelectObject, BITMAPINFO, BITMAPINFOHEADER, DIB_RGB_COLORS,
+    };
+    use windows_sys::Win32::Storage::Xps::PrintWindow;
+    use windows_sys::Win32::UI::WindowsAndMessaging::GetClientRect;
+
+    if target_hwnd_val == 0 {
+        return None;
+    }
+    let hwnd = target_hwnd_val as HWND;
+    unsafe {
+        let mut rc: RECT = std::mem::zeroed();
+        if GetClientRect(hwnd, &mut rc) == 0 {
+            return None;
+        }
+        let w = (rc.right - rc.left).max(0) as usize;
+        let h = (rc.bottom - rc.top).max(0) as usize;
+        if w < 100 || h < 100 {
+            return None;
+        }
+
+        let screen = GetDC(std::ptr::null_mut());
+        if screen.is_null() {
+            return None;
+        }
+        let mem = CreateCompatibleDC(screen);
+        let bmp = CreateCompatibleBitmap(screen, w as i32, h as i32);
+        if mem.is_null() || bmp.is_null() {
+            if !bmp.is_null() {
+                DeleteObject(bmp);
+            }
+            if !mem.is_null() {
+                DeleteDC(mem);
+            }
+            ReleaseDC(std::ptr::null_mut(), screen);
+            return None;
+        }
+        let old = SelectObject(mem, bmp);
+        let printed = PrintWindow(hwnd, mem, 3) != 0;
+
+        let mut buf = vec![0u8; w * h * 4];
+        let mut bmi: BITMAPINFO = std::mem::zeroed();
+        bmi.bmiHeader = BITMAPINFOHEADER {
+            biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+            biWidth: w as i32,
+            biHeight: -(h as i32),
+            biPlanes: 1,
+            biBitCount: 32,
+            biCompression: 0,
+            biSizeImage: 0,
+            biXPelsPerMeter: 0,
+            biYPelsPerMeter: 0,
+            biClrUsed: 0,
+            biClrImportant: 0,
+        };
+        let got = GetDIBits(mem, bmp, 0, h as u32, buf.as_mut_ptr() as *mut _, &mut bmi, DIB_RGB_COLORS);
+
+        SelectObject(mem, old);
+        DeleteObject(bmp);
+        DeleteDC(mem);
+        ReleaseDC(std::ptr::null_mut(), screen);
+
+        if !printed || got == 0 {
+            return None;
+        }
+
+        // Convert BGRA to RGBA
+        for px in buf.chunks_exact_mut(4) {
+            px.swap(0, 2);
+            px[3] = 255;
+        }
+
+        image::RgbaImage::from_raw(w as u32, h as u32, buf)
+    }
+}
+
+#[cfg(not(windows))]
+pub fn capture_app_viewport(_target_hwnd_val: isize) -> Option<image::RgbaImage> {
+    None
 }
 
 // ---------------------------------------------------------------- state & logging
@@ -1398,6 +1910,7 @@ pub fn now_secs() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
 
+#[allow(dead_code)]
 pub fn now_millis() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
 }

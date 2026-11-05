@@ -254,7 +254,42 @@ impl UpdateManager {
             let suite_repo = "gochujangs33-dot/Craft-Studio";
             let user_reg = crate::apps::get_user_registry_path(&exe_dir);
 
-            // Tier 0: Direct app-specific and custom repository check (e.g. user's own GitHub releases)
+            // Tier 0: Sync remote registry.json so new cards appear automatically (Immune to API rate limit)
+            let reg_url = format!("https://raw.githubusercontent.com/{suite_repo}/main/registry.json");
+            if let Some(reg_json) = fetch_url_string(&reg_url) {
+                if reg_json.starts_with('{') {
+                    if let Some(parent) = user_reg.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    let _ = std::fs::write(&user_reg, reg_json);
+                }
+            }
+
+            // Tier 1: Check remote version.json manifest (Single fast request, immune to API rate limits!)
+            let ver_url = format!("https://raw.githubusercontent.com/{suite_repo}/main/version.json");
+            if let Some(ver_json) = fetch_url_string(&ver_url) {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&ver_json) {
+                    if let Some(apps) = v.get("apps").and_then(|a| a.as_object()) {
+                        if let Ok(mut map) = latest_store.lock() {
+                            for (id, val) in apps {
+                                if let Some(ver) = val.get("version").and_then(|v| v.as_str()) {
+                                    let clean_ver = ver.trim_start_matches('v').to_string();
+                                    if let Some(existing) = map.get(id) {
+                                        if is_newer(&clean_ver, existing) {
+                                            map.insert(id.clone(), clean_ver);
+                                        }
+                                    } else {
+                                        map.insert(id.clone(), clean_ver);
+                                    }
+                                    found += 1;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Tier 2: Only check individual GitHub Releases API for custom repositories or missing apps
             for (id, repo_url) in &repos {
                 let repo_path = repo_url
                     .trim_start_matches("https://github.com/")
@@ -263,6 +298,13 @@ impl UpdateManager {
                 if repo_path.is_empty() || repo_path.eq_ignore_ascii_case(suite_repo) {
                     continue;
                 }
+                // If it's the upstream default storytold repo and already resolved from version.json, skip API request to conserve rate limits
+                let is_default_storytold = repo_path.starts_with("storytold/");
+                let already_resolved = latest_store.lock().map(|m| m.contains_key(id)).unwrap_or(false);
+                if is_default_storytold && already_resolved {
+                    continue;
+                }
+
                 let rel_url = format!("https://api.github.com/repos/{repo_path}/releases/latest");
                 if let Some(rel_json) = fetch_url_string(&rel_url) {
                     if let Ok(rel) = serde_json::from_str::<serde_json::Value>(&rel_json) {
@@ -276,47 +318,6 @@ impl UpdateManager {
                                     sources.insert(id.clone(), repo_path.to_string());
                                 }
                                 found += 1;
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Tier 1: Sync remote registry.json so new cards appear automatically
-            let reg_url = format!("https://raw.githubusercontent.com/{suite_repo}/main/registry.json");
-            if let Some(reg_json) = fetch_url_string(&reg_url) {
-                if reg_json.starts_with('{') {
-                    if let Some(parent) = user_reg.parent() {
-                        let _ = std::fs::create_dir_all(parent);
-                    }
-                    let _ = std::fs::write(&user_reg, reg_json);
-                }
-            }
-
-            // Tier 2: Check remote version.json manifest
-            let ver_url = format!("https://raw.githubusercontent.com/{suite_repo}/main/version.json");
-            if let Some(ver_json) = fetch_url_string(&ver_url) {
-                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&ver_json) {
-                    if let Some(apps) = v.get("apps").and_then(|a| a.as_object()) {
-                        if let Ok(mut map) = latest_store.lock() {
-                            for (id, val) in apps {
-                                // If already customized from direct repo, don't overwrite with older manifest
-                                if let Ok(sources) = custom_sources.lock() {
-                                    if sources.contains_key(id) {
-                                        continue;
-                                    }
-                                }
-                                if let Some(ver) = val.get("version").and_then(|v| v.as_str()) {
-                                    let clean_ver = ver.trim_start_matches('v').to_string();
-                                    if let Some(existing) = map.get(id) {
-                                        if is_newer(&clean_ver, existing) {
-                                            map.insert(id.clone(), clean_ver);
-                                        }
-                                    } else {
-                                        map.insert(id.clone(), clean_ver);
-                                    }
-                                    found += 1;
-                                }
                             }
                         }
                     }

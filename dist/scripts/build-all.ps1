@@ -49,7 +49,8 @@ $distSaves = Join-Path $dist "SavedFiles"
 New-Item -ItemType Directory -Force $distSaves | Out-Null
 foreach ($app in $reg.apps) {
     $folderName = $app.prefix + "Craft"
-    if ($app.id -eq "hop") { $folderName = "HopCraft" }
+    if ($app.name) { $folderName = $app.name }
+    elseif ($app.id -eq "hop") { $folderName = "HopCraft" }
     New-Item -ItemType Directory -Force (Join-Path $distSaves $folderName) | Out-Null
 }
 

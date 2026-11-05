@@ -30,6 +30,9 @@ const ICONS: &[(&str, &[u8])] = &[
     ("figcraft", include_bytes!("../assets/icons/figcraft.png")),
     ("hop", include_bytes!("../assets/icons/hop.png")),
     ("cutcraft", include_bytes!("../assets/icons/cutcraft.png")),
+    ("texturecraft", include_bytes!("../assets/icons/texturecraft.png")),
+    ("materialcraft", include_bytes!("../assets/icons/materialcraft.png")),
+    ("craft-anything", include_bytes!("../assets/icons/craft-anything.png")),
 ];
 
 #[derive(PartialEq, Clone, Copy)]
@@ -340,12 +343,12 @@ impl Launcher {
             Ok(pid) => {
                 apps::log(&format!("launched {id} (pid {pid}) exe={exe:?} file={file:?} save_dir={save_dir:?}"));
                 self.active_companion_app = id.clone();
-                if self.state.auto_show_companion {
-                    self.embedded_ai_open = true;
+                if !id.eq_ignore_ascii_case("solidcraft") && !id.eq_ignore_ascii_case("craft-anything") {
                     let comp = self.companions.entry(id.clone()).or_insert_with(|| crate::companion::CompanionState::new_for_app(&id, &name));
                     comp.is_open = true;
-                    comp.is_minimized = false;
-                    comp.api_key = self.state.gemini_api_key.clone();
+                    if comp.api_key.is_empty() && !self.state.gemini_api_key.is_empty() {
+                        comp.api_key = self.state.gemini_api_key.clone();
+                    }
                     comp.provider = crate::companion::AiProvider::from_u8(self.state.ai_provider);
                 }
                 self.state.last_opened.insert(id.clone(), apps::now_secs());
@@ -582,17 +585,7 @@ impl Launcher {
                             self.show_settings = !self.show_settings;
                         }
 
-                        // AI Companion toggle button (Controls in-app companion panel on launch)
-                        let any_open = self.state.auto_show_companion;
-                        let ai_lbl = if any_open { "🤖 앱 내장 AI 패널 (켜짐)" } else { "🤖 앱 내장 AI 패널 (꺼짐)" };
-                        let ai_tooltip = if ko { "PhotoCraft 등 프로그램 실행 시 우측 하단 내장 AI 채팅창 표시 설정" } else { "Toggle in-app AI companion panel on app launch" };
-                        if chip(ui, ai_lbl, any_open, false).on_hover_text(ai_tooltip).clicked() {
-                            self.state.auto_show_companion = !self.state.auto_show_companion;
-                            for c in self.companions.values_mut() {
-                                c.is_open = self.state.auto_show_companion;
-                            }
-                            self.state.save();
-                        }
+                        // SolidCraft-style Assistant is integrated directly inside each running app (Ctrl+Shift+A / Toolbar AI button / View -> Assistant)
 
                         // Update Manager button with auto-detected badge
                         let upd_count = self.available_update_count();
@@ -1015,8 +1008,9 @@ impl Launcher {
         // App Name Centered: Prefix (White) + Craft (Accent color)
         cui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 0.0_f32;
-            ui.label(RichText::new(&e.meta.prefix).size(18.0_f32).strong().color(INK));
-            ui.label(RichText::new("Craft").size(18.0_f32).strong().color(accent));
+            let (p1, p2) = e.meta.display_parts();
+            ui.label(RichText::new(&p1).size(18.0_f32).strong().color(INK));
+            ui.label(RichText::new(&p2).size(18.0_f32).strong().color(accent));
             if e.meta.group == "new" {
                 ui.add_space(4.0_f32);
                 Frame::new()
@@ -1101,8 +1095,9 @@ impl Launcher {
                                 ui.image((tex.id(), vec2(24.0_f32, 24.0_f32)));
                             }
                             ui.spacing_mut().item_spacing.x = 0.0_f32;
-                            ui.label(RichText::new(&e.meta.prefix).strong().size(14.0_f32).color(INK));
-                            ui.label(RichText::new("Craft").strong().size(14.0_f32).color(accent));
+                            let (p1, p2) = e.meta.display_parts();
+                            ui.label(RichText::new(&p1).strong().size(14.0_f32).color(INK));
+                            ui.label(RichText::new(&p2).strong().size(14.0_f32).color(accent));
                             if e.is_custom_mod {
                                 ui.add_space(4.0_f32);
                                 ui.label(RichText::new("[MOD]").font(mono(9.0_f32)).color(Color32::from_rgb(0xD8, 0x96, 0xFF)));
@@ -1208,8 +1203,9 @@ impl Launcher {
                     for e in &self.entries {
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 0.0_f32;
-                            ui.label(RichText::new(&e.meta.prefix).strong().color(INK));
-                            ui.label(RichText::new("Craft").strong().color(hex(&e.meta.accent)));
+                            let (p1, p2) = e.meta.display_parts();
+                            ui.label(RichText::new(&p1).strong().color(INK));
+                            ui.label(RichText::new(&p2).strong().color(hex(&e.meta.accent)));
                         });
                         ui.label(RichText::new("Apache-2.0").font(mono(11.0_f32)).color(MUTED));
                         ui.label(
@@ -2381,11 +2377,17 @@ impl eframe::App for Launcher {
         self.drop_overlay(ctx);
         self.toasts_ui(ctx);
 
-        // Render docked AI companion viewport inside running apps (PhotoCraft, etc.)
+        // Render SolidCraft-style Assistant (Ctrl+Shift+A / Toolbar AI button / View -> Assistant) inside running apps
         let mut companion_actions = Vec::new();
         let temp_dir = std::env::temp_dir().join("ArtCraftCompanion");
         let mut any_companion_active = false;
+        let hotkey_ctrl_shift_a = crate::apps::check_ctrl_shift_a_edge();
+        let mut state_dirty = false;
+
         for (app_id, companion) in self.companions.iter_mut() {
+            if app_id.eq_ignore_ascii_case("solidcraft") || app_id.eq_ignore_ascii_case("craft-anything") {
+                continue;
+            }
             if !companion.is_open {
                 continue;
             }
@@ -2399,13 +2401,28 @@ impl eframe::App for Launcher {
                 .map(|e| e.meta.name().to_string())
                 .unwrap_or_else(|| app_id.clone());
 
-            let is_running = !pids.is_empty() || crate::apps::get_app_window_rect(&pids, &app_name).is_some();
+            let win_info = crate::apps::get_app_window_info(&pids, &app_name);
+            let is_running = !pids.is_empty() || win_info.is_some();
             if !is_running {
                 continue;
             }
 
-            companion.api_key = self.state.gemini_api_key.clone();
-            companion.provider = crate::companion::AiProvider::from_u8(self.state.ai_provider);
+            // Toggle Assistant panel when user presses Ctrl + Shift + A inside the active app
+            if hotkey_ctrl_shift_a {
+                if let Some((target_hwnd, _)) = win_info {
+                    if crate::apps::is_specific_app_foreground(target_hwnd, &app_name, &pids) {
+                        companion.is_minimized = !companion.is_minimized;
+                        companion.show_view_menu = false;
+                    }
+                }
+            }
+
+            if companion.api_key.is_empty() && !self.state.gemini_api_key.is_empty() {
+                companion.api_key = self.state.gemini_api_key.clone();
+            }
+
+            let prev_key = companion.api_key.clone();
+            let prev_prov = companion.provider.to_u8();
 
             let mut action = None;
             companion.render_for_app(
@@ -2418,9 +2435,22 @@ impl eframe::App for Launcher {
                 &temp_dir,
                 &mut action,
             );
+
+            if companion.api_key != prev_key {
+                self.state.gemini_api_key = companion.api_key.clone();
+                state_dirty = true;
+            }
+            if companion.provider.to_u8() != prev_prov {
+                self.state.ai_provider = companion.provider.to_u8();
+                state_dirty = true;
+            }
+
             if let Some((target, file_path)) = action {
                 companion_actions.push((target, file_path));
             }
+        }
+        if state_dirty {
+            self.state.save();
         }
         if any_companion_active {
             ctx.request_repaint_after(std::time::Duration::from_millis(50));
@@ -2525,8 +2555,9 @@ fn show_app_tooltip(ui: &mut egui::Ui, e: &AppEntry, lang: &str, ko: bool) {
         ui.spacing_mut().item_spacing = vec2(0.0_f32, 4.0_f32);
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 0.0_f32;
-            ui.label(RichText::new(&e.meta.prefix).size(16.0_f32).strong().color(INK));
-            ui.label(RichText::new("Craft").size(16.0_f32).strong().color(accent));
+            let (p1, p2) = e.meta.display_parts();
+            ui.label(RichText::new(&p1).size(16.0_f32).strong().color(INK));
+            ui.label(RichText::new(&p2).size(16.0_f32).strong().color(accent));
             ui.add_space(8.0_f32);
             ui.label(RichText::new(e.meta.like(lang)).size(11.0_f32).color(Color32::from_rgb(0xA0, 0xA0, 0xAC)));
         });

@@ -15,10 +15,14 @@ use std::thread;
 // Design Tokens (matching custom dark design system)
 #[allow(dead_code)]
 const BG_COMPANION: Color32 = Color32::from_rgb(0x13, 0x16, 0x20);
+#[allow(dead_code)]
 const CARD_BG: Color32 = Color32::from_rgb(0x18, 0x18, 0x1E);
+#[allow(dead_code)]
 const ACCENT_DEFAULT: Color32 = Color32::from_rgb(0x68, 0x98, 0xFF);
+#[allow(dead_code)]
 const TEXT_MAIN: Color32 = Color32::from_rgb(0xEE, 0xEE, 0xF2);
 const TEXT_MUTED: Color32 = Color32::from_rgb(0x8E, 0x8E, 0x9A);
+#[allow(dead_code)]
 const BORDER_COLOR: Color32 = Color32::from_rgb(0x2A, 0x2A, 0x34);
 
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -78,7 +82,8 @@ pub struct ActionResult {
     pub file_path: PathBuf,
     pub app_id: String,
     pub auto_open: bool,
-    pub can_paste: bool,
+    #[allow(dead_code)]
+pub can_paste: bool,
     #[allow(dead_code)]
     pub can_overwrite: bool,
     pub original_path: Option<PathBuf>,
@@ -97,6 +102,7 @@ impl ActionResult {
         }
     }
 
+    #[allow(dead_code)]
     pub fn for_image(
         label: impl Into<String>,
         app_id: impl Into<String>,
@@ -164,16 +170,36 @@ pub struct CompanionState {
     pub is_busy: bool,
     pub api_key: String,
     pub provider: AiProvider,
+    pub model_name: String,
+    pub base_url: String,
+    pub show_settings_panel: bool,
+    pub show_toolbar_button: bool,
+    pub show_view_menu: bool,
+    pub require_approval: bool,
+    pub pending_approval: Option<ActionResult>,
+    pub selected_agent: String,
+    pub is_connected: bool,
+    pub show_acp_install_guide: bool,
+    pub attach_view: bool,
+    pub attach_selection: bool,
+    pub edit_mode: String,
+    pub last_toolbar_pos: Option<[f32; 2]>,
+    pub last_toolbar_size: Option<[f32; 2]>,
     pub status_msg: Option<String>,
     #[allow(dead_code)]
     pub v_was_down: bool,
     pub last_dock_pos: Option<[f32; 2]>,
     pub last_dock_size: Option<[f32; 2]>,
-    pub side_menu_detected: bool,
-    pub last_side_menu_check: u64,
-    pub dock_beside_sidebar: bool,
-    pub native_sidebar_px: f32,
-    pub last_sidebar_check: u64,
+    #[allow(dead_code)]
+pub side_menu_detected: bool,
+    #[allow(dead_code)]
+pub last_side_menu_check: u64,
+    #[allow(dead_code)]
+pub dock_beside_sidebar: bool,
+    #[allow(dead_code)]
+pub native_sidebar_px: f32,
+    #[allow(dead_code)]
+pub last_sidebar_check: u64,
     resp_sender: Sender<AsyncResponse>,
     resp_receiver: Receiver<AsyncResponse>,
 }
@@ -190,39 +216,14 @@ impl CompanionState {
         Self::default()
     }
 
-    pub fn new_for_app(app_id: &str, _app_name: &str) -> Self {
+        pub fn new_for_app(app_id: &str, _app_name: &str) -> Self {
         let (tx, rx) = channel();
-        let mut messages = Vec::new();
-        let greeting = match app_id.to_lowercase().as_str() {
-            "photocraft" => "안녕하세요! PhotoCraft 전용 AI 어시스턴트입니다.\n현재 캔버스에 열린 사진의 편집 요청('배경 지워줘', '배경 흐리게', '더 밝게', '흑백', '좌우 반전', '90도 회전' 등)을 편하게 말씀해 주세요. 사진을 따로 복사/첨부하지 않아도 자동으로 인식합니다!",
-            "vectorcraft" => "안녕하세요! VectorCraft 벡터 일러스트 AI 어시스턴트입니다.\n'로고 디자인', '별/화살표 아이콘 SVG 생성', '심볼 제작' 등의 벡터 그래픽 요청을 입력해 보세요.",
-            "filmcraft" => "안녕하세요! FilmCraft 비선형 영상 편집 AI 어시스턴트입니다.\n'유튜브 영상 콘티', '타임라인 컷 대본', '자막/BGM 연출 구성안' 작성을 도와드립니다.",
-            "lightcraft" => "안녕하세요! LightCraft 사진 보정/RAW 현상 AI 어시스턴트입니다.\n'시네마틱 감성 색감', '야경 보정 프리셋', '인물 톤업 레시피' 생성을 도와드립니다.",
-            "pdfcraft" => "안녕하세요! PdfCraft PDF 문서 AI 어시스턴트입니다.\n'표준 계약서 양식', '동의서 서식 작성', '문서 구조 요약' 등을 지원합니다.",
-            "effectcraft" => "안녕하세요! EffectCraft 모션 그래픽 & VFX AI 어시스턴트입니다.\n'타이틀 자막 애니메이션 키프레임', '로고 인트로 연출안', 'VFX 타이밍 시트'를 생성해 드립니다.",
-            "designcraft" => "안녕하세요! DesignCraft 출판/인쇄 레이아웃 AI 어시스턴트입니다.\n'3단 리플렛 구성', '카탈로그/포스터 레이아웃 기획', '그리드 규격안'을 작성해 드립니다.",
-            "wordcraft" => "안녕하세요! WordCraft 문서/오피스 AI 어시스턴트입니다.\n'기획서 작성', '보고서 초안', '회의록 요약', '이력서/자기소개서' 작성을 도와드립니다.",
-            "deckcraft" => "안녕하세요! DeckCraft 프레젠테이션 AI 어시스턴트입니다.\n'발표 슬라이드 초안', '투자 피치덱 5장 구성', '사업계획서 발표자료'를 제작해 드립니다.",
-            "gridcraft" => "안녕하세요! GridCraft 스프레드시트 AI 어시스턴트입니다.\n'가계부 표 생성', '견적서 서식', '월별 매출 통계 시트', '수식 자동 계산'을 도와드립니다.",
-            "cadcraft" => "안녕하세요! CADCraft 2D/3D CAD 모델링 AI 어시스턴트입니다.\n'3D 큐브/기어 모델링', '기하 형상 OBJ 생성', '기계 부품 도면 초안'을 지원합니다.",
-            "solidcraft" => "안녕하세요! SolidCraft 파라메트릭 3D CAD AI 어시스턴트입니다.\n'솔리드 모델링 설계', '3D 부품 파라메트릭 스케치', 'STEP/OBJ 모델 생성'을 도와드립니다.",
-            "soundcraft" => "안녕하세요! SoundCraft 디지털 오디오 AI 어시스턴트입니다.\n'팟캐스트 녹음 대본', '라디오 오프닝 스크립트', '음향 SFX 큐시트' 작성을 도와드립니다.",
-            "figcraft" => "안녕하세요! FigCraft UI/UX 디자인 AI 어시스턴트입니다.\n'모바일 앱 로그인 화면 UI 기획', '대시보드 와이어프레임 구조', '디자인 시스템 토큰'을 설계해 드립니다.",
-            "hop" => "안녕하세요! HopCraft 대한민국 공문서 AI 어시스턴트입니다.\n'표준 공문서 양식', '기안서/품의서 작성', 'HWP 공문서 서식' 작성을 도와드립니다.",
-            _ => "안녕하세요! ArtCraft Studio AI 어시스턴트입니다.\n요청사항을 입력하시거나 질문을 남겨주시면 즉시 도와드립니다.",
-        };
-        messages.push(ChatMessage {
-            role: Role::Assistant,
-            text: greeting.to_string(),
-            image_preview: None,
-            image_path: None,
-            action_result: None,
-            timestamp: now_secs(),
-        });
+        // Start with an empty message history so the native SolidCraft "Set up an assistant" screen appears!
+        let messages = Vec::new();
 
         Self {
             is_open: true,
-            is_minimized: false,
+            is_minimized: true,
             auto_show_on_launch: true,
             target_app: Some(app_id.to_string()),
             messages,
@@ -233,21 +234,35 @@ impl CompanionState {
             is_busy: false,
             api_key: String::new(),
             provider: AiProvider::Gemini,
+            model_name: "gemini-2.5-flash".to_string(),
+            base_url: "https://generativelanguage.googleapis.com".to_string(),
+            show_settings_panel: false,
+            show_toolbar_button: true,
+            show_view_menu: false,
+            require_approval: true,
+            pending_approval: None,
+            selected_agent: "No agent found".to_string(),
+            is_connected: false,
+            show_acp_install_guide: true,
+            attach_view: true,
+            attach_selection: false,
+            edit_mode: "Edits".to_string(),
+            last_toolbar_pos: None,
+            last_toolbar_size: None,
             status_msg: None,
             v_was_down: false,
             last_dock_pos: None,
             last_dock_size: None,
             side_menu_detected: false,
             last_side_menu_check: 0,
-            dock_beside_sidebar: true,
+            dock_beside_sidebar: false,
             native_sidebar_px: 0.0,
             last_sidebar_check: 0,
             resp_sender: tx,
             resp_receiver: rx,
         }
     }
-
-    /// Sets the active app context and opens the companion
+/// Sets the active app context and opens the companion
     #[allow(dead_code)]
     pub fn activate_for_app(&mut self, app_id: &str) {
         self.target_app = Some(app_id.to_string());
@@ -324,6 +339,9 @@ impl CompanionState {
             }
             let mut pid = 0u32;
             GetWindowThreadProcessId(hwnd, &mut pid);
+            if pid == std::process::id() {
+                return 1;
+            }
             let pid_matched = !ctx.pids.is_empty() && ctx.pids.contains(&pid);
 
             let mut buf = [0u16; 256];
@@ -337,6 +355,8 @@ impl CompanionState {
             let lower_title = title.to_lowercase();
             // Never target our own AI companion dock or ArtCraft Studio launcher
             if lower_title.ends_with(" ai")
+                || lower_title.ends_with(" assistant")
+                || lower_title.ends_with(" toolbar")
                 || lower_title.contains("ai 도우미")
                 || lower_title.contains("artcraft studio")
             {
@@ -411,7 +431,8 @@ impl CompanionState {
     }
 
     /// Tries to paste an image from the system clipboard (supports bitmap data, copied file paths, and retries)
-    pub fn try_paste_image(&mut self, ctx: &egui::Context, temp_dir: &Path) -> bool {
+    #[allow(dead_code)]
+pub fn try_paste_image(&mut self, ctx: &egui::Context, temp_dir: &Path) -> bool {
         for attempt in 0..4 {
             if attempt > 0 {
                 std::thread::sleep(std::time::Duration::from_millis(15));
@@ -490,7 +511,9 @@ impl CompanionState {
                         preview = Some(tex);
                     }
                     if let Some(act) = &action {
-                        if act.auto_open {
+                        if self.require_approval {
+                            self.pending_approval = Some(act.clone());
+                        } else if act.auto_open {
                             // Load into the app that is already open; never spawn a new window
                             let _ = live_open_via_rpc(&act.app_id, &act.file_path);
                         }
@@ -588,6 +611,7 @@ impl CompanionState {
     }
 
     /// Saves the current working image to disk upon user request/completion
+    #[allow(dead_code)]
     pub fn save_working_image(&mut self, saves_base: &Path) -> Option<PathBuf> {
         let rgba = self.working_image.as_ref()?;
         let target_app = self.target_app.clone().unwrap_or_else(|| "photocraft".to_string());
@@ -674,7 +698,34 @@ impl CompanionState {
         }
     }
 
-    /// Renders the AI companion docked at the right side panel of the screen for a specific app
+        /// Captures the target app's current viewport via Win32 PrintWindow and attaches it to the prompt (Attach View)
+    pub fn attach_current_view(&mut self, ctx: &egui::Context, target_hwnd: isize, temp_dir: &Path) -> bool {
+        if let Some(rgba) = crate::apps::capture_app_viewport(target_hwnd) {
+            let _ = std::fs::create_dir_all(temp_dir);
+            let filename = format!("attached_view_{}.png", now_secs());
+            let img_path = temp_dir.join(filename);
+            let rgba_save = rgba.clone();
+            let path_save = img_path.clone();
+            std::thread::spawn(move || {
+                let _ = rgba_save.save(&path_save);
+            });
+
+            let thumb = image::imageops::thumbnail(&rgba, 240, 240);
+            let size = [thumb.width() as usize, thumb.height() as usize];
+            let color_img = egui::ColorImage::from_rgba_unmultiplied(size, thumb.as_flat_samples().as_slice());
+            let tex = ctx.load_texture(format!("attached_view_{}", now_secs()), color_img, Default::default());
+
+            self.working_image = Some(rgba.clone());
+            self.working_preview = Some(tex.clone());
+            self.pending_image = Some((rgba, tex, img_path));
+            self.status_msg = Some("📷 현재 뷰포트 화면이 첨부되었습니다.".to_string());
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Renders the SolidCraft-style native Assistant docked seamlessly at the rightmost boundary
     pub fn render_for_app(
         &mut self,
         ctx: &egui::Context,
@@ -686,6 +737,11 @@ impl CompanionState {
         temp_dir: &Path,
         open_action: &mut Option<(String, PathBuf)>,
     ) {
+        // SolidCraft has its own native built-in Assistant; Craft Anything is an AI app
+        if app_id.eq_ignore_ascii_case("solidcraft") || app_id.eq_ignore_ascii_case("craft-anything") {
+            return;
+        }
+
         if let Some((app_id, file)) = self.poll_response(ctx, pids, app_name) {
             *open_action = Some((app_id, file));
         }
@@ -695,114 +751,166 @@ impl CompanionState {
         }
 
         let vp_id = ViewportId::from_hash_of(format!("companion_dock_{app_id}"));
-
-        let is_solidcraft = app_id.eq_ignore_ascii_case("solidcraft");
-        let is_cadcraft = app_id.eq_ignore_ascii_case("cadcraft");
-
-        // Dynamic width: slim 36px toggle strip when minimized, 300px native panel width when open
-        let width = if self.is_minimized {
-            36.0_f32
-        } else {
-            300.0_f32
-        };
+        let tb_vp_id = ViewportId::from_hash_of(format!("companion_toolbar_{app_id}"));
         let ppp = ctx.pixels_per_point().max(0.1);
+        let tb_title = format!("{app_name} Toolbar");
+        let companion_title = format!("{app_name} Assistant");
+
+        ctx.request_repaint_after(std::time::Duration::from_millis(32));
 
         let app_info = crate::apps::get_app_window_info(pids, app_name);
-        let (target_hwnd, app_rect) = match app_info {
+        let (target_hwnd, raw_app_rect) = match app_info {
             Some((hwnd, rect)) => (hwnd, rect),
             None => {
-                if self.last_dock_pos.is_some() {
-                    ctx.send_viewport_cmd_to(vp_id, egui::ViewportCommand::Visible(false));
-                }
-                ctx.request_repaint_after(std::time::Duration::from_millis(50));
+                crate::apps::sync_companion_window(&tb_title, 0, false, -15000, -15000, 1, 1);
+                crate::apps::sync_companion_window(&companion_title, 0, false, -15000, -15000, 1, 1);
                 return;
             }
         };
 
-        // Window Synchronization: Only hide when target app is minimized to taskbar
-        let companion_title = format!("{app_name} AI");
         let is_target_minimized = crate::apps::is_window_iconic(target_hwnd);
-
         if is_target_minimized {
-            ctx.send_viewport_cmd_to(vp_id, egui::ViewportCommand::Visible(false));
-            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+            crate::apps::sync_companion_window(&tb_title, target_hwnd, false, -15000, -15000, 1, 1);
+            crate::apps::sync_companion_window(&companion_title, target_hwnd, false, -15000, -15000, 1, 1);
             return;
         }
 
-        // Real-time detection of right side menu (Format Shape, PhotoCraft panels)
-        let now_ms = crate::apps::now_millis();
-        if now_ms.saturating_sub(self.last_side_menu_check) >= 80 {
-            self.last_side_menu_check = now_ms;
-            self.side_menu_detected = crate::apps::detect_side_menu_open(target_hwnd, app_rect, ppp, app_id);
-        }
+        // Side-by-side split docking: shrinks the target app window by 320px from the right when Assistant is open
+        // so that native right-hand sidebars (e.g. PhotoCraft's Color / Properties / Layers) are never covered.
+        // Automatically restores the target app window to full width when Assistant is minimized/closed.
+        let dock_w_pt = 320.0_f32;
+        let dock_w_px = (dock_w_pt * ppp).round() as i32;
+        let (app_rect, dock_rect) = crate::apps::apply_window_split_dock(
+            target_hwnd,
+            dock_w_px,
+            !self.is_minimized,
+            raw_app_rect,
+        );
 
         let left_pt = app_rect[0] / ppp;
         let right_pt = app_rect[2] / ppp;
         let top_pt = app_rect[1] / ppp;
-        let bottom_pt = app_rect[3] / ppp;
 
-        // Dynamic offsets based on application ribbon & status bar heights:
-        // SolidCraft: Top ribbon (titlebar + tabs + sketch toolbar + category chevrons) = 172px, Bottom history timeline = 42px
-        // CADCraft: Top menu/toolbars/tab = 108px, Bottom status bar = 28px
-        let (top_offset, bottom_offset) = match app_id.to_lowercase().as_str() {
-            "solidcraft" => (172.0_f32, 42.0_f32),
-            "cadcraft" => (108.0_f32, 28.0_f32),
-            "filmcraft" => (85.0_f32, 30.0_f32),
-            "wordcraft" | "gridcraft" => (125.0_f32, 28.0_f32),
-            _ => (118.0_f32, 26.0_f32),
-        };
+        // 1. Top toolbar button (Ai Assistant + ⚙ 설정)
+        // Positioned neatly in the top menu bar matching the target app's native dark theme.
+        if self.show_toolbar_button {
+            let tb_w = 142.0_f32;
+            let tb_h = 24.0_f32;
+            // In PhotoCraft, place naturally right after '도움말(H)' (~505px); in other apps adapt smoothly
+            let tb_x = if app_id.eq_ignore_ascii_case("photocraft") {
+                (left_pt + 508.0_f32).min(right_pt - tb_w - 200.0_f32)
+            } else {
+                (right_pt - tb_w - 240.0_f32).max(left_pt + 380.0_f32)
+            };
+            let tb_y = top_pt + 3.0_f32;
 
-        // Dock directly left of the app's native right sidebar so it is never covered
-        if now_ms.saturating_sub(self.last_sidebar_check) >= 700 {
-            self.last_sidebar_check = now_ms;
-            if let Some(px) = crate::apps::detect_native_sidebar_width(target_hwnd) {
-                if px > 100.0_f32 && (px - self.native_sidebar_px).abs() >= 3.0_f32 {
-                    self.native_sidebar_px = px;
+            let tb_x_px = (tb_x * ppp).round() as i32;
+            let tb_y_px = (tb_y * ppp).round() as i32;
+            let tb_w_px = (tb_w * ppp).round() as i32;
+            let tb_h_px = (tb_h * ppp).round() as i32;
+
+            let tb_builder = ViewportBuilder::default()
+                .with_title(tb_title.clone())
+                .with_inner_size([tb_w, tb_h])
+                .with_resizable(false)
+                .with_visible(true)
+                .with_decorations(false)
+                .with_transparent(false)
+                .with_position([tb_x, tb_y]);
+
+            ctx.show_viewport_immediate(tb_vp_id, tb_builder, |ctx, _class| {
+                ctx.request_repaint_after(std::time::Duration::from_millis(32));
+                if self.last_toolbar_pos != Some([tb_x, tb_y]) {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(tb_x, tb_y)));
+                    self.last_toolbar_pos = Some([tb_x, tb_y]);
                 }
-            }
+                if self.last_toolbar_size != Some([tb_w, tb_h]) {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(tb_w, tb_h)));
+                    self.last_toolbar_size = Some([tb_w, tb_h]);
+                }
+                crate::apps::sync_companion_window(&tb_title, target_hwnd, true, tb_x_px, tb_y_px, tb_w_px, tb_h_px);
+
+                let accent_blue = Color32::from_rgb(0x3B, 0x82, 0xF6);
+                let panel_open = !self.is_minimized;
+
+                // Native app menu bar styled frame (#2B2C31 background, #3E4048 border)
+                egui::CentralPanel::default()
+                    .frame(
+                        Frame::new()
+                            .fill(Color32::from_rgb(0x28, 0x29, 0x2E))
+                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(0x3E, 0x40, 0x48)))
+                            .corner_radius(4.0_f32)
+                            .inner_margin(Margin::symmetric(6, 2)),
+                    )
+                    .show(ctx, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 4.0_f32;
+
+                            // Ai Assistant clickable toggle button
+                            let btn_color = if panel_open { accent_blue } else { Color32::from_rgb(0xE4, 0xE4, 0xEB) };
+                            let ai_btn = ui.add(
+                                egui::Button::new(
+                                    RichText::new("✦ Ai Assistant")
+                                        .size(11.5_f32)
+                                        .strong()
+                                        .color(btn_color),
+                                )
+                                .frame(false),
+                            )
+                            .on_hover_text("단축키: Ctrl + Shift + A");
+
+                            if ai_btn.clicked() {
+                                self.is_minimized = !self.is_minimized;
+                            }
+
+                            // Subtle vertical divider
+                            ui.separator();
+
+                            // Settings gear icon ⚙
+                            let gear_color = if self.show_settings_panel { accent_blue } else { Color32::from_rgb(0xA1, 0xA1, 0xAA) };
+                            let gear_btn = ui.add(
+                                egui::Button::new(
+                                    RichText::new("⚙")
+                                        .size(12.0_f32)
+                                        .color(gear_color),
+                                )
+                                .frame(false),
+                            )
+                            .on_hover_text("설정 (Preferences > AI)");
+
+                            if gear_btn.clicked() {
+                                self.is_minimized = false;
+                                self.show_settings_panel = !self.show_settings_panel;
+                            }
+                        });
+                    });
+            });
+        } else {
+            crate::apps::sync_companion_window(&tb_title, target_hwnd, false, -15000, -15000, 1, 1);
         }
 
-        let fallback_sidebar_pt = crate::apps::default_sidebar_width_for_app(app_id);
-        let detected_sidebar_pt = if self.native_sidebar_px > 100.0_f32 {
-            self.native_sidebar_px / ppp
+        // 2. Rightmost Split-Docked Assistant Panel
+        // Keep the viewport alive inside eframe even when minimized (parked offscreen at -15000,-15000)
+        // so that reopening via Ctrl+Shift+A or Toolbar button is instantaneous and never dropped by winit.
+        let (x, y, width, height) = if self.is_minimized {
+            (-15000.0_f32, -15000.0_f32, dock_w_pt, 240.0_f32)
         } else {
-            0.0_f32
+            let dx = dock_rect[0] / ppp;
+            let dy = dock_rect[1] / ppp;
+            let dw = ((dock_rect[2] - dock_rect[0]) / ppp).max(280.0_f32);
+            let dh = ((dock_rect[3] - dock_rect[1]) / ppp).max(220.0_f32);
+            (dx, dy, dw, dh)
         };
 
-        // If detected sidebar width is valid, use it; otherwise use calibrated native sidebar profile
-        let effective_sidebar_pt = if detected_sidebar_pt > 50.0_f32 {
-            detected_sidebar_pt
-        } else {
-            fallback_sidebar_pt
-        };
-
-        let sidebar_offset = if self.dock_beside_sidebar {
-            effective_sidebar_pt
-        } else {
-            0.0_f32
-        };
-
-        let x = (right_pt - sidebar_offset - width).max(left_pt);
-
-        let (y, height) = if !self.side_menu_detected || self.native_sidebar_px > 0.0_f32 {
-            let start_y = top_pt + top_offset;
-            let end_y = bottom_pt - bottom_offset;
-            let h = (end_y - start_y).max(180.0_f32);
-            (start_y, h)
-        } else {
-            let compact_h = 340.0_f32;
-            let max_h = (bottom_pt - bottom_offset) - (top_pt + top_offset);
-            let h = compact_h.min(max_h).max(180.0_f32);
-            let start_y = (bottom_pt - bottom_offset) - h;
-            (start_y, h)
-        };
-
-        ctx.request_repaint_after(std::time::Duration::from_millis(32));
+        let dock_x_px = if self.is_minimized { -15000 } else { dock_rect[0].round() as i32 };
+        let dock_y_px = if self.is_minimized { -15000 } else { dock_rect[1].round() as i32 };
+        let dock_w_actual_px = if self.is_minimized { 320 } else { (dock_rect[2] - dock_rect[0]).round() as i32 };
+        let dock_h_actual_px = if self.is_minimized { 240 } else { (dock_rect[3] - dock_rect[1]).round() as i32 };
 
         let builder = ViewportBuilder::default()
             .with_title(companion_title.clone())
             .with_inner_size([width, height])
-            .with_min_inner_size([36.0_f32, 150.0_f32])
+            .with_min_inner_size([280.0_f32, 200.0_f32])
             .with_max_inner_size([width, 3000.0_f32])
             .with_resizable(false)
             .with_visible(true)
@@ -811,7 +919,7 @@ impl CompanionState {
             .with_position([x, y]);
 
         ctx.show_viewport_immediate(vp_id, builder, |ctx, _class| {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+            ctx.request_repaint_after(std::time::Duration::from_millis(32));
             if self.last_dock_pos != Some([x, y]) {
                 ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(x, y)));
                 self.last_dock_pos = Some([x, y]);
@@ -820,12 +928,22 @@ impl CompanionState {
                 ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(width, height)));
                 self.last_dock_size = Some([width, height]);
             }
-            ctx.request_repaint_after(std::time::Duration::from_millis(32));
 
-            // Link AI companion as an owned window of target app
-            crate::apps::set_companion_owner(&companion_title, target_hwnd);
+            crate::apps::sync_companion_window(
+                &companion_title,
+                target_hwnd,
+                true,
+                dock_x_px,
+                dock_y_px,
+                dock_w_actual_px,
+                dock_h_actual_px,
+            );
 
-            // Handle dropped image files
+            if self.is_minimized {
+                return;
+            }
+
+            // Handle drag-and-drop files
             let dropped = ctx.input(|i| i.raw.dropped_files.clone());
             for df in dropped {
                 if let Some(p) = df.path {
@@ -837,20 +955,9 @@ impl CompanionState {
                 }
             }
 
-            let bg_color = if is_solidcraft {
-                Color32::from_rgb(0x18, 0x18, 0x1B) // SolidCraft Zinc Dark
-            } else if is_cadcraft {
-                Color32::from_rgb(0x1E, 0x22, 0x2B) // CADCraft Slate Dark
-            } else {
-                Color32::from_rgb(0x22, 0x24, 0x2B)
-            };
-            let border_color = if is_solidcraft {
-                Color32::from_rgb(0x27, 0x27, 0x2A) // SolidCraft subtle border
-            } else if is_cadcraft {
-                Color32::from_rgb(0x2D, 0x33, 0x3F) // CADCraft subtle border
-            } else {
-                Color32::from_rgb(0x1C, 0x1E, 0x24)
-            };
+            // SolidCraft native dark palette (#18181B / #1E2028 background, #2B2E3B border)
+            let bg_color = Color32::from_rgb(0x18, 0x18, 0x1B);
+            let border_color = Color32::from_rgb(0x27, 0x27, 0x2A);
 
             egui::CentralPanel::default()
                 .frame(
@@ -858,63 +965,35 @@ impl CompanionState {
                         .fill(bg_color)
                         .stroke(Stroke::new(1.0_f32, border_color))
                         .corner_radius(0.0_f32)
-                        .inner_margin(Margin { left: 0, right: 0, top: 0, bottom: 8 }),
+                        .inner_margin(Margin { left: 0, right: 0, top: 0, bottom: 6 }),
                 )
                 .show(ctx, |ui| {
-                    if self.is_minimized {
-                        self.render_minimized_strip(ui, is_solidcraft, is_cadcraft);
-                    } else {
-                        self.render_full(ui, ctx, entries, saves_base, temp_dir, open_action, app_name, pids);
-                    }
+                    self.render_solidcraft_acp_panel(ui, ctx, entries, saves_base, temp_dir, open_action, app_name, pids, target_hwnd);
                 });
-        });
-    }
-
-    fn render_minimized_strip(&mut self, ui: &mut Ui, is_solidcraft: bool, is_cadcraft: bool) {
-        let accent_color = if is_solidcraft {
-            Color32::from_rgb(0x22, 0xC5, 0x5E)
-        } else if is_cadcraft {
-            Color32::from_rgb(0x1F, 0xA6, 0xC9)
-        } else {
-            Color32::from_rgb(0x68, 0x98, 0xFF)
-        };
-
-        ui.vertical_centered(|ui| {
-            ui.add_space(8.0_f32);
-            let btn = ui.add(
-                egui::Button::new(RichText::new("◀").size(12.0_f32).color(accent_color).strong())
-                    .frame(false)
-            ).on_hover_text("ai 도우미 표시하기");
-            if btn.clicked() {
-                self.is_minimized = false;
-            }
-            ui.add_space(8.0_f32);
-            ui.label(RichText::new("✨").size(14.0_f32).color(accent_color));
-            ui.add_space(10.0_f32);
-            for ch in ["A", "I", "도", "우", "미"] {
-                ui.label(RichText::new(ch).size(10.5_f32).color(Color32::from_rgb(0xD0, 0xD0, 0xD8)).strong());
-                ui.add_space(2.0_f32);
-            }
         });
     }
 
     #[allow(dead_code)]
-    fn render_minimized(&mut self, ui: &mut Ui, app_name: &str, ctx: &egui::Context) {
-        let resp = Frame::new()
-            .fill(Color32::from_rgb(0x2B, 0x2D, 0x33))
-            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(0x1C, 0x1E, 0x24)))
-            .inner_margin(Margin::symmetric(10, 4))
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("AI 도우미").strong().size(11.0_f32).color(Color32::from_rgb(0xDF, 0xE1, 0xE8)));
-                    ui.label(RichText::new(format!("{app_name}")).font(egui::FontId::monospace(9.0_f32)).color(Color32::from_rgb(0x3E, 0x7B, 0xFA)));
-                });
-            });
-        let _ = resp;
-        let _ = ctx;
+    fn render_minimized(&mut self, ui: &mut Ui, app_name: &str, _ctx: &egui::Context) {
+        let _ = (ui, app_name);
     }
 
     fn render_full(
+        &mut self,
+        ui: &mut Ui,
+        ctx: &egui::Context,
+        entries: &[AppEntry],
+        saves_base: &Path,
+        temp_dir: &Path,
+        open_action: &mut Option<(String, PathBuf)>,
+        app_name: &str,
+        pids: &[u32],
+    ) {
+        self.render_solidcraft_acp_panel(ui, ctx, entries, saves_base, temp_dir, open_action, app_name, pids, 0);
+    }
+
+    /// Renders the 100% SolidCraft-native Assistant UI panel (ACP standard specification)
+    fn render_solidcraft_acp_panel(
         &mut self,
         ui: &mut Ui,
         ctx: &egui::Context,
@@ -924,432 +1003,529 @@ impl CompanionState {
         open_action: &mut Option<(String, PathBuf)>,
         app_name: &str,
         _pids: &[u32],
+        target_hwnd: isize,
     ) {
-        let is_solidcraft = app_name.to_lowercase().contains("solidcraft");
-        let is_cadcraft = app_name.to_lowercase().contains("cadcraft");
-        let header_bg = if is_solidcraft {
-            Color32::from_rgb(0x1F, 0x1F, 0x23)
-        } else if is_cadcraft {
-            Color32::from_rgb(0x23, 0x27, 0x32)
-        } else {
-            Color32::from_rgb(0x2B, 0x2D, 0x33)
-        };
-        let border_stroke_color = if is_solidcraft {
-            Color32::from_rgb(0x27, 0x27, 0x2A)
-        } else if is_cadcraft {
-            Color32::from_rgb(0x2D, 0x33, 0x3F)
-        } else {
-            Color32::from_rgb(0x1C, 0x1E, 0x24)
-        };
-        let accent_color = if is_solidcraft {
-            Color32::from_rgb(0x22, 0xC5, 0x5E)
-        } else if is_cadcraft {
-            Color32::from_rgb(0x1F, 0xA6, 0xC9)
-        } else {
-            Color32::from_rgb(0x68, 0x98, 0xFF)
-        };
+        let header_bg = Color32::from_rgb(0x18, 0x18, 0x1B);
+        let border_stroke = Color32::from_rgb(0x27, 0x27, 0x2A);
+        let accent_blue = Color32::from_rgb(0x25, 0x63, 0xEB); // SolidCraft Primary Blue
 
-        // --- Native Side Panel Header Bar ---
+        // -------------------------------------------------------------
+        // 1. [상단 헤더 바] Top Header Bar
+        // -------------------------------------------------------------
         Frame::new()
             .fill(header_bg)
-            .stroke(Stroke::new(1.0_f32, border_stroke_color))
-            .corner_radius(0.0_f32)
-            .inner_margin(Margin::symmetric(10, 6))
+            .stroke(Stroke::new(1.0_f32, border_stroke))
+            .inner_margin(Margin::symmetric(10, 8))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    // Left thin arrow button: collapse/hide AI companion
-                    let collapse_btn = ui.add(
-                        egui::Button::new(RichText::new("▶").size(11.0_f32).color(accent_color).strong())
-                            .frame(false)
-                    ).on_hover_text("ai 도우미 숨기기");
-                    if collapse_btn.clicked() {
-                        self.is_minimized = true;
-                    }
+                    // Left: Sidebar icon (drawn via painter so no missing font glyph) + Assistant Title + Status
+                    let (icon_rect, _) = ui.allocate_exact_size(vec2(14.0_f32, 12.0_f32), egui::Sense::hover());
+                    let stroke_col = Color32::from_rgb(0xA1, 0xA1, 0xAA);
+                    ui.painter().rect_stroke(icon_rect, 2.0_f32, Stroke::new(1.2_f32, stroke_col), egui::StrokeKind::Inside);
+                    let div_x = icon_rect.left() + 5.0_f32;
+                    ui.painter().line_segment(
+                        [egui::pos2(div_x, icon_rect.top()), egui::pos2(div_x, icon_rect.bottom())],
+                        Stroke::new(1.2_f32, stroke_col),
+                    );
+                    ui.add_space(3.0_f32);
+                    ui.label(RichText::new("Assistant").strong().size(13.0_f32).color(Color32::WHITE));
                     ui.add_space(4.0_f32);
 
-                    ui.label(
-                        RichText::new("✨ AI 도우미")
-                            .strong()
-                            .size(11.5_f32)
-                            .color(if is_solidcraft || is_cadcraft { accent_color } else { Color32::from_rgb(0xDF, 0xE1, 0xE8) }),
-                    );
-                    if is_solidcraft {
-                        ui.label(
-                            RichText::new("SolidCraft 3D")
-                                .font(egui::FontId::monospace(9.5_f32))
-                                .color(Color32::from_rgb(0x71, 0x71, 0x7A)),
-                        );
-                    } else if is_cadcraft {
-                        ui.label(
-                            RichText::new("CADCraft 2D/3D")
-                                .font(egui::FontId::monospace(9.5_f32))
-                                .color(Color32::from_rgb(0x6D, 0x82, 0x99)),
-                        );
-                    }
+                    let status_txt = if self.is_connected {
+                        format!("● {}", self.selected_agent)
+                    } else {
+                        "Not connected".to_string()
+                    };
+                    let status_col = if self.is_connected {
+                        Color32::from_rgb(0x4A, 0xDE, 0x80)
+                    } else {
+                        Color32::from_rgb(0x71, 0x71, 0x7A)
+                    };
+                    ui.label(RichText::new(status_txt).size(11.0_f32).color(status_col));
 
-                    // Right side toggle: Keep beside native sidebar vs dock to window edge
+                    // Right: Actions (+ / ⚙ / — / ✕)
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        let (icon, tip, color) = if self.dock_beside_sidebar {
-                            ("◫", "기존 사이드바 나란히 배치 (사이드바 가림 방지 중)\n클릭하면 창 오른쪽 끝으로 붙입니다", accent_color)
-                        } else {
-                            ("⇥", "창 오른쪽 끝에 도킹됨\n클릭하면 기존 사이드바를 가리지 않도록 나란히 배치합니다", Color32::from_rgb(0x70, 0x75, 0x88))
-                        };
-                        if ui.add(egui::Button::new(RichText::new(icon).size(13.0_f32).color(color)).frame(false))
-                            .on_hover_text(tip)
+                        if ui.add(egui::Button::new(RichText::new("✕").size(11.5_f32).color(Color32::from_rgb(0xA1, 0xA1, 0xAA))).frame(false))
+                            .on_hover_text("Close Assistant (Ctrl+Shift+A)")
                             .clicked()
                         {
-                            self.dock_beside_sidebar = !self.dock_beside_sidebar;
+                            self.is_minimized = true;
+                        }
+
+                        if ui.add(egui::Button::new(RichText::new("—").size(11.5_f32).color(Color32::from_rgb(0xA1, 0xA1, 0xAA))).frame(false))
+                            .on_hover_text("Minimize")
+                            .clicked()
+                        {
+                            self.is_minimized = true;
+                        }
+
+                        let gear_col = if self.show_settings_panel { accent_blue } else { Color32::from_rgb(0xA1, 0xA1, 0xAA) };
+                        if ui.add(egui::Button::new(RichText::new("⚙").size(12.0_f32).color(gear_col)).frame(false))
+                            .on_hover_text("Preferences > AI")
+                            .clicked()
+                        {
+                            self.show_settings_panel = !self.show_settings_panel;
+                        }
+
+                        if ui.add(egui::Button::new(RichText::new("+").size(13.0_f32).color(Color32::from_rgb(0xA1, 0xA1, 0xAA))).frame(false))
+                            .on_hover_text("New conversation")
+                            .clicked()
+                        {
+                            self.messages.clear();
+                            self.pending_image = None;
+                            self.working_image = None;
+                            self.working_preview = None;
+                            self.status_msg = Some("새 대화 세션이 시작되었습니다.".to_string());
                         }
                     });
                 });
             });
 
-        ui.add_space(2.0_f32);
-        ui.separator();
-        ui.add_space(3.0_f32);
+        // -------------------------------------------------------------
+        // 2. [에이전트 연결 컨트롤 섹션] Agent Connection Controls
+        // -------------------------------------------------------------
+        Frame::new()
+            .fill(Color32::from_rgb(0x14, 0x14, 0x17))
+            .stroke(Stroke::new(1.0_f32, border_stroke))
+            .inner_margin(Margin::symmetric(12, 10))
+            .show(ui, |ui| {
+                ui.vertical(|ui| {
+                    // Dropdown combo
+                    let combo_w = ui.available_width();
+                    egui::ComboBox::from_id_salt("acp_agent_select")
+                        .selected_text(RichText::new(&self.selected_agent).size(12.0_f32).color(Color32::WHITE))
+                        .width(combo_w - 8.0_f32)
+                        .show_ui(ui, |ui| {
+                            for agent in &["No agent found", "Claude Code", "Codex", "Google Antigravity", "OpenCode", "xAI Grok"] {
+                                if ui.selectable_value(&mut self.selected_agent, agent.to_string(), *agent).clicked() {
+                                    if *agent != "No agent found" {
+                                        self.show_acp_install_guide = false;
+                                    }
+                                }
+                            }
+                        });
 
-        // --- Chat message area ---
-        let footer_height = if self.pending_image.is_some() || self.working_image.is_some() {
-            170.0_f32
-        } else {
-            76.0_f32
-        };
-        let scroll_height = (ui.available_height() - footer_height).max(80.0_f32);
+                    ui.add_space(6.0_f32);
 
-        let mut do_paste = false;
+                    // Connect / Disconnect button
+                    let btn_txt = if self.is_connected { "Disconnect" } else { "Connect" };
+                    let btn_bg = if self.is_connected { Color32::from_rgb(0x37, 0x41, 0x51) } else { accent_blue };
+                    let connect_btn = ui.add_sized(
+                        [ui.available_width(), 26.0_f32],
+                        egui::Button::new(RichText::new(btn_txt).strong().size(12.0_f32).color(Color32::WHITE)).fill(btn_bg),
+                    );
+                    if connect_btn.clicked() {
+                        if self.is_connected {
+                            self.is_connected = false;
+                            self.status_msg = Some("에이전트 연결이 해제되었습니다.".to_string());
+                        } else {
+                            if self.selected_agent == "No agent found" {
+                                self.selected_agent = "Google Antigravity".to_string();
+                            }
+                            self.is_connected = true;
+                            self.show_acp_install_guide = false;
+                            self.status_msg = Some(format!("{} 에이전트에 연결되었습니다.", self.selected_agent));
+                        }
+                    }
+
+                    ui.add_space(6.0_f32);
+
+                    // Row: Agent label + Add agent... + Refresh
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("Agent").size(11.0_f32).color(Color32::from_rgb(0x71, 0x71, 0x7A)));
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            if ui.add(egui::Button::new(RichText::new("Refresh").size(11.0_f32).color(Color32::from_rgb(0x93, 0xC5, 0xFD))).frame(false))
+                                .on_hover_text("Refresh installed agents")
+                                .clicked()
+                            {
+                                self.status_msg = Some("에이전트 목록을 새로고침했습니다.".to_string());
+                            }
+                            ui.add_space(4.0_f32);
+                            if ui.add(egui::Button::new(RichText::new("Add agent...").size(11.0_f32).color(Color32::from_rgb(0x93, 0xC5, 0xFD))).frame(false))
+                                .on_hover_text("Add custom agent")
+                                .clicked()
+                            {
+                                self.show_settings_panel = true;
+                            }
+                        });
+                    });
+
+                    // Collapsible ACP agent install guide
+                    if !self.is_connected {
+                        ui.add_space(6.0_f32);
+                        let guide_lbl = if self.show_acp_install_guide {
+                            "▼ NO CODING AGENT FOUND. INSTALL ONE OF THESE:"
+                        } else {
+                            "▶ NO CODING AGENT FOUND. INSTALL ONE OF THESE:"
+                        };
+                        if ui.add(egui::Button::new(RichText::new(guide_lbl).font(egui::FontId::monospace(9.5_f32)).color(Color32::from_rgb(0xA1, 0xA1, 0xAA))).frame(false)).clicked() {
+                            self.show_acp_install_guide = !self.show_acp_install_guide;
+                        }
+
+                        if self.show_acp_install_guide {
+                            ui.add_space(4.0_f32);
+                            let acp_items = [
+                                ("Claude Code", "npm install -g @agentclientprotocol/claude-agent-acp"),
+                                ("Codex", "npm install -g @agentclientprotocol/codex-acp"),
+                                ("Google Antigravity", "download the Antigravity ACP server for your system (see agentclientprotocol.com/registry), unzip it and put agy_acp_server.exe on your PATH"),
+                                ("OpenCode", "npm install -g opencode-ai"),
+                                ("xAI Grok", "npm install -g @agentclientprotocol/grok-acp"),
+                            ];
+
+                            for (agent_name, cmd) in acp_items {
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new(agent_name).size(11.0_f32).strong().color(Color32::from_rgb(0xE4, 0xE4, 0xE7)));
+                                    if ui.add(egui::Button::new(RichText::new("Copy").size(10.0_f32).color(Color32::from_rgb(0x60, 0xA5, 0xFA))).frame(false)).clicked() {
+                                        Self::copy_text_to_clipboard(cmd);
+                                        self.status_msg = Some(format!("{agent_name} 설치 명령어가 복사되었습니다."));
+                                    }
+                                });
+                                ui.label(RichText::new(cmd).font(egui::FontId::monospace(9.0_f32)).color(Color32::from_rgb(0x71, 0x71, 0x7A)));
+                                ui.add_space(3.0_f32);
+                            }
+                        }
+                    }
+                });
+            });
+
+        // Preferences panel view
+        if self.show_settings_panel {
+            Frame::new()
+                .fill(Color32::from_rgb(0x18, 0x1A, 0x22))
+                .stroke(Stroke::new(1.0_f32, border_stroke))
+                .inner_margin(Margin::symmetric(10, 8))
+                .show(ui, |ui| {
+                    ui.vertical(|ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Preferences > AI").strong().size(11.5_f32).color(Color32::WHITE));
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                if ui.small_button("Done").clicked() {
+                                    self.show_settings_panel = false;
+                                }
+                            });
+                        });
+                        ui.add_space(4.0_f32);
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Agent Provider:").size(10.5_f32).color(TEXT_MUTED));
+                            egui::ComboBox::from_id_salt("pref_provider_select")
+                                .selected_text(self.provider.label())
+                                .width(160.0_f32)
+                                .show_ui(ui, |ui| {
+                                    if ui.selectable_value(&mut self.provider, AiProvider::Gemini, "Google Gemini").clicked() {
+                                        self.model_name = "gemini-2.5-flash".to_string();
+                                        self.base_url = "https://generativelanguage.googleapis.com".to_string();
+                                    }
+                                    if ui.selectable_value(&mut self.provider, AiProvider::Claude, "Anthropic Claude").clicked() {
+                                        self.model_name = "claude-sonnet-4-20250514".to_string();
+                                        self.base_url = "https://api.anthropic.com".to_string();
+                                    }
+                                    if ui.selectable_value(&mut self.provider, AiProvider::OpenAi, "OpenAI / 호환 API").clicked() {
+                                        self.model_name = "gpt-4o".to_string();
+                                        self.base_url = "https://api.openai.com/v1".to_string();
+                                    }
+                                    if ui.selectable_value(&mut self.provider, AiProvider::Ollama, "Ollama (로컬)").clicked() {
+                                        self.model_name = "llama3.2".to_string();
+                                        self.base_url = "http://127.0.0.1:11434".to_string();
+                                    }
+                                });
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Model: ").size(10.5_f32).color(TEXT_MUTED));
+                            ui.add(egui::TextEdit::singleline(&mut self.model_name).desired_width(170.0_f32));
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Base URL:").size(10.5_f32).color(TEXT_MUTED));
+                            ui.add(egui::TextEdit::singleline(&mut self.base_url).desired_width(170.0_f32));
+                        });
+                        if self.provider != AiProvider::Ollama {
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("API Key: ").size(10.5_f32).color(TEXT_MUTED));
+                                ui.add(egui::TextEdit::singleline(&mut self.api_key).password(true).desired_width(170.0_f32));
+                            });
+                        }
+                        ui.checkbox(&mut self.require_approval, RichText::new("Require approval before applying edits").size(10.5_f32));
+                    });
+                });
+        }
+
+        // -------------------------------------------------------------
+        // 3. [중앙 영역] Center Area (Empty State or Conversation History)
+        // -------------------------------------------------------------
+        let input_area_height = 118.0_f32;
+        let middle_height = (ui.available_height() - input_area_height).max(100.0_f32);
+
         let mut do_restore: Option<(PathBuf, PathBuf)> = None;
-        let mut do_save_copy: Option<PathBuf> = None;
 
         ScrollArea::vertical()
-            .max_height(scroll_height)
+            .max_height(middle_height)
             .auto_shrink([false, false])
             .stick_to_bottom(true)
             .show(ui, |ui| {
-                ui.spacing_mut().item_spacing.y = 8.0_f32;
-                for msg in &self.messages {
-                    match msg.role {
-                        Role::User => {
-                            ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
-                                Frame::new()
-                                    .fill(Color32::from_rgb(0x1F, 0x2A, 0x44))
-                                    .corner_radius(8.0_f32)
-                                    .inner_margin(Margin::symmetric(10, 8))
-                                    .show(ui, |ui| {
-                                        ui.set_max_width(260.0_f32);
-                                        ui.vertical(|ui| {
-                                            if let Some(tex) = &msg.image_preview {
-                                                ui.image((tex.id(), vec2(100.0_f32, 100.0_f32 * (tex.size()[1] as f32 / tex.size()[0] as f32).max(0.5_f32).min(1.5_f32))));
-                                                ui.add_space(4.0_f32);
-                                            }
-                                            ui.label(RichText::new(&msg.text).color(TEXT_MAIN).size(12.0_f32));
-                                        });
-                                    });
+                if !self.is_connected && self.messages.is_empty() {
+                    // --- SolidCraft Native Empty State View ---
+                    ui.add_space(28.0_f32);
+                    ui.vertical_centered(|ui| {
+                        // Blue chat bubble icon
+                        Frame::new()
+                            .fill(Color32::from_rgb(0x1D, 0x4E, 0xD8))
+                            .corner_radius(20.0_f32)
+                            .inner_margin(Margin::same(10))
+                            .show(ui, |ui| {
+                                ui.label(RichText::new("💬").size(20.0_f32).color(Color32::WHITE));
                             });
+
+                        ui.add_space(10.0_f32);
+                        ui.label(RichText::new("Set up an assistant").strong().size(15.0_f32).color(Color32::WHITE));
+                        ui.add_space(6.0_f32);
+
+                        let desc = format!("{app_name} talks to a coding agent installed on this computer. Pick one in Preferences > AI.");
+                        ui.label(RichText::new(desc).size(11.0_f32).color(Color32::from_rgb(0x94, 0xA3, 0xB8)));
+                        ui.add_space(14.0_f32);
+
+                        if ui.add_sized(
+                            [140.0_f32, 28.0_f32],
+                            egui::Button::new(RichText::new("Open Preferences").strong().size(11.5_f32).color(Color32::WHITE))
+                                .fill(accent_blue)
+                                .corner_radius(4.0_f32),
+                        ).clicked() {
+                            self.show_settings_panel = true;
                         }
-                        Role::Assistant => {
-                            ui.with_layout(Layout::left_to_right(Align::Min), |ui| {
-                                Frame::new()
-                                    .fill(CARD_BG)
-                                    .stroke(Stroke::new(1.0_f32, BORDER_COLOR))
-                                    .corner_radius(8.0_f32)
-                                    .inner_margin(Margin::symmetric(10, 8))
-                                    .show(ui, |ui| {
-                                        ui.set_max_width(280.0_f32);
-                                        ui.vertical(|ui| {
-                                            if let Some(tex) = &msg.image_preview {
-                                                let aspect = (tex.size()[1] as f32 / tex.size()[0] as f32).max(0.4_f32).min(2.0_f32);
-                                                let w = 180.0_f32.min(ui.available_width() - 10.0_f32);
-                                                ui.image((tex.id(), vec2(w, w * aspect)));
-                                                ui.add_space(4.0_f32);
-                                            }
-                                            ui.label(RichText::new(&msg.text).color(TEXT_MAIN).size(12.0_f32));
-                                            
-                                            // Clickable action buttons
-                                            if let Some(action) = &msg.action_result {
-                                                ui.add_space(6.0_f32);
-                                                ui.vertical(|ui| {
-                                                    // 1. Primary badge or open button
-                                                    let is_live = action.label.contains("실시간");
-                                                    if is_live {
-                                                        ui.horizontal(|ui| {
-                                                            ui.label(
-                                                                RichText::new("⚡ PhotoCraft 화면에 실시간 즉시 반영됨")
-                                                                    .font(egui::FontId::monospace(10.5_f32))
-                                                                    .strong()
-                                                                    .color(Color32::from_rgb(0x50, 0xFA, 0x9E)),
-                                                            );
-                                                        });
-                                                    } else {
-                                                        let open_btn = ui.button(
-                                                            RichText::new(format!("✨ {}", action.label))
-                                                                .font(egui::FontId::monospace(11.0_f32))
-                                                                .strong()
-                                                                .color(Color32::from_rgb(0x50, 0xFA, 0x9E)),
-                                                        ).on_hover_text("새 캔버스로 열기");
-                                                        if open_btn.clicked() {
-                                                            *open_action = Some((action.app_id.clone(), action.file_path.clone()));
-                                                        }
-                                                    }
+                    });
+                } else {
+                    // --- Conversation Messages View ---
+                    ui.spacing_mut().item_spacing.y = 8.0_f32;
 
-                                                    // 2. Restore original button (if backup exists)
-                                                    if let Some(orig) = &action.original_path {
-                                                        if orig.exists() {
-                                                            let restore_btn = ui.button(
-                                                                RichText::new("↩ 원본으로 되돌리기")
-                                                                    .font(egui::FontId::monospace(10.5_f32))
-                                                                    .strong()
-                                                                    .color(Color32::from_rgb(0xFF, 0xB8, 0x6C)),
-                                                            ).on_hover_text("현재 수정을 취소하고 원래 이미지로 즉시 되돌립니다");
-                                                            if restore_btn.clicked() {
-                                                                do_restore = Some((orig.clone(), action.file_path.clone()));
-                                                            }
-                                                        }
-                                                    }
+                    // Approval request banner
+                    let mut approval_action: Option<bool> = None;
+                    if let Some(ref pending) = self.pending_approval {
+                        let pending_label = pending.label.clone();
+                        Frame::new()
+                            .fill(Color32::from_rgb(0x27, 0x20, 0x12))
+                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(0xF5, 0x9E, 0x0B)))
+                            .inner_margin(Margin::symmetric(10, 6))
+                            .show(ui, |ui| {
+                                ui.vertical(|ui| {
+                                    ui.label(RichText::new(format!("⏳ Allow the agent to do this? ({pending_label})")).strong().size(11.0_f32).color(Color32::from_rgb(0xFB, 0xBF, 0x24)));
+                                    ui.add_space(4.0_f32);
+                                    ui.horizontal(|ui| {
+                                        if ui.button(RichText::new("Allow").size(10.5_f32).strong().color(Color32::from_rgb(0x4A, 0xDE, 0x80))).clicked() {
+                                            approval_action = Some(true);
+                                        }
+                                        if ui.button(RichText::new("Deny").size(10.5_f32).color(Color32::from_rgb(0xF8, 0x71, 0x71))).clicked() {
+                                            approval_action = Some(false);
+                                        }
+                                    });
+                                });
+                            });
+                    }
+                    if let Some(allow) = approval_action {
+                        if allow {
+                            if let Some(act) = self.pending_approval.take() {
+                                if !live_open_via_rpc(&act.app_id, &act.file_path) {
+                                    *open_action = Some((act.app_id, act.file_path));
+                                }
+                            }
+                        } else {
+                            self.pending_approval = None;
+                        }
+                    }
 
+                    for msg in &self.messages {
+                        match msg.role {
+                            Role::User => {
+                                ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
+                                    Frame::new()
+                                        .fill(Color32::from_rgb(0x1E, 0x29, 0x3B))
+                                        .corner_radius(6.0_f32)
+                                        .inner_margin(Margin::symmetric(10, 8))
+                                        .show(ui, |ui| {
+                                            ui.set_max_width(260.0_f32);
+                                            ui.vertical(|ui| {
+                                                if let Some(tex) = &msg.image_preview {
+                                                    ui.image((tex.id(), vec2(100.0_f32, 75.0_f32)));
+                                                    ui.add_space(4.0_f32);
+                                                }
+                                                ui.label(RichText::new(&msg.text).color(Color32::WHITE).size(12.0_f32));
+                                            });
+                                        });
+                                });
+                            }
+                            Role::Assistant => {
+                                ui.with_layout(Layout::left_to_right(Align::Min), |ui| {
+                                    Frame::new()
+                                        .fill(Color32::from_rgb(0x18, 0x18, 0x1E))
+                                        .stroke(Stroke::new(1.0_f32, border_stroke))
+                                        .corner_radius(6.0_f32)
+                                        .inner_margin(Margin::symmetric(10, 8))
+                                        .show(ui, |ui| {
+                                            ui.set_max_width(280.0_f32);
+                                            ui.vertical(|ui| {
+                                                ui.label(RichText::new(&msg.text).color(Color32::from_rgb(0xEE, 0xEE, 0xF2)).size(12.0_f32));
+
+                                                if let Some(action) = &msg.action_result {
+                                                    ui.add_space(6.0_f32);
                                                     ui.horizontal(|ui| {
-                                                        if action.can_paste {
-                                                            let copy_btn = ui.button(
-                                                                RichText::new("📋 클립보드 복사")
-                                                                    .font(egui::FontId::monospace(10.0_f32))
-                                                                    .color(Color32::from_rgb(0xD0, 0xD0, 0xE0)),
-                                                            ).on_hover_text("현재 투명 이미지를 클립보드에 복사합니다");
-                                                            if copy_btn.clicked() {
-                                                                do_paste = true;
-                                                            }
-                                                        }
+                                                        ui.label(RichText::new(format!("⚡ {}", action.label)).font(egui::FontId::monospace(10.0_f32)).color(Color32::from_rgb(0x4A, 0xDE, 0x80)));
 
-                                                        let save_copy_btn = ui.button(
-                                                            RichText::new("💾 별도 저장")
-                                                                .font(egui::FontId::monospace(10.0_f32))
-                                                                .color(Color32::from_rgb(0x66, 0xC2, 0xFF)),
-                                                        ).on_hover_text("새 별도 PNG 파일로 복사 저장합니다");
-                                                        if save_copy_btn.clicked() {
-                                                            do_save_copy = Some(action.file_path.clone());
-                                                        }
-
-                                                        let reveal_path = action.file_path.clone();
-                                                        if ui.button(
-                                                            RichText::new("📂 저장 폴더")
-                                                                .font(egui::FontId::monospace(10.0_f32))
-                                                                .color(Color32::from_rgb(0xD0, 0xD0, 0xE0)),
-                                                        ).on_hover_text("생성된 파일 위치를 윈도우 탐색기에서 엽니다").clicked() {
-                                                            #[cfg(windows)]
-                                                            {
-                                                                use std::os::windows::process::CommandExt;
-                                                                let _ = std::process::Command::new("explorer.exe")
-                                                                    .arg(format!("/select,{}", reveal_path.display()))
-                                                                    .creation_flags(0x08000000)
-                                                                    .spawn();
+                                                        // One-click Undo
+                                                        if let Some(orig) = &action.original_path {
+                                                            if orig.exists() {
+                                                                if ui.button(RichText::new("↩ Undo").size(10.0_f32).color(Color32::from_rgb(0xFB, 0xBF, 0x24))).on_hover_text("이 메시지에서 에이전트가 바꾼 모든 것을 한 번에 실행 취소").clicked() {
+                                                                    do_restore = Some((orig.clone(), action.file_path.clone()));
+                                                                }
                                                             }
                                                         }
                                                     });
-                                                });
-                                            }
+                                                }
+                                            });
                                         });
-                                    });
-                            });
-                        }
-                        Role::System => {
-                            ui.vertical_centered(|ui| {
-                                ui.label(RichText::new(&msg.text).font(egui::FontId::monospace(10.0_f32)).color(TEXT_MUTED));
-                            });
+                                });
+                            }
+                            Role::System => {
+                                ui.label(RichText::new(&msg.text).font(egui::FontId::monospace(9.5_f32)).color(TEXT_MUTED));
+                            }
                         }
                     }
-                }
 
-                if self.is_busy {
-                    ui.horizontal(|ui| {
-                        ui.spinner();
-                        ui.label(RichText::new("AI가 요청을 처리 중입니다...").font(egui::FontId::monospace(10.5_f32)).color(TEXT_MUTED));
-                    });
+                    if self.is_busy {
+                        ui.horizontal(|ui| {
+                            ui.spinner();
+                            ui.label(RichText::new("Agent working...").font(egui::FontId::monospace(10.5_f32)).color(TEXT_MUTED));
+                        });
+                    }
                 }
             });
-
-        if do_paste {
-            if let Some(rgba) = &self.working_image {
-                Self::copy_image_to_clipboard(rgba);
-            }
-            self.status_msg = Some("📋 클립보드에 투명 이미지가 복사되었습니다.".to_string());
-        }
 
         if let Some((backup, target)) = do_restore {
             if let Ok(orig_dyn) = image::open(&backup) {
                 let rgba = orig_dyn.to_rgba8();
                 if rgba.save(&target).is_ok() {
                     photocraft_live_reload_document(&target);
-                    let thumb = image::imageops::thumbnail(&rgba, 320, 320);
-                    let size = [thumb.width() as usize, thumb.height() as usize];
-                    let color_img = egui::ColorImage::from_rgba_unmultiplied(size, thumb.as_flat_samples().as_slice());
-                    let tex = ctx.load_texture(format!("working_preview_{}", now_secs()), color_img, Default::default());
-                    self.working_image = Some(rgba);
-                    self.working_preview = Some(tex);
-                    self.status_msg = Some("↩ 캔버스가 원본 이미지로 성공적으로 복원되었습니다!".to_string());
+                    self.status_msg = Some("↩ 실행 취소 완료: 이전 상태로 원복되었습니다.".to_string());
                 }
             }
         }
 
-        if let Some(target) = do_save_copy {
-            let copy_name = format!("photocraft_saved_{}.png", now_secs());
-            let copy_path = saves_base.join("PhotoCraft").join(&copy_name);
-            let _ = std::fs::copy(&target, &copy_path);
-            self.status_msg = Some(format!("💾 별도 파일({copy_name})로 저장되었습니다."));
-        }
-
-        ui.separator();
-
-        // --- Working Image In-Progress Banner (Unsaved in-memory state) ---
-        let mut do_save = false;
-        if let Some(tex) = &self.working_preview {
-            let tex_id = tex.id();
-            Frame::new()
-                .fill(Color32::from_rgb(0x16, 0x22, 0x36))
-                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(0x3B, 0x6E, 0xAA)))
-                .corner_radius(6.0_f32)
-                .inner_margin(Margin::symmetric(8, 5))
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.image((tex_id, vec2(28.0_f32, 28.0_f32)));
-                        ui.vertical(|ui| {
-                            ui.label(
-                                RichText::new("🎨 현재 이미지 작업 중 (미저장)")
-                                    .strong()
-                                    .font(egui::FontId::monospace(10.5_f32))
-                                    .color(Color32::from_rgb(0x66, 0xC2, 0xFF)),
-                            );
-                            ui.label(
-                                RichText::new("수정이 완료되면 우측 버튼을 눌러 저장하세요")
-                                    .font(egui::FontId::monospace(9.0_f32))
-                                    .color(TEXT_MUTED),
-                            );
-                        });
-                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            let save_btn = ui.button(
-                                RichText::new("💾 완성! 저장")
-                                    .font(egui::FontId::monospace(11.0_f32))
-                                    .strong()
-                                    .color(Color32::from_rgb(0x50, 0xFA, 0x9E)),
-                            ).on_hover_text("현재까지 수정한 이미지를 최종 파일로 저장합니다");
-                            if save_btn.clicked() {
-                                do_save = true;
-                            }
-                        });
-                    });
-                });
-            ui.add_space(4.0_f32);
-        }
-        if do_save {
-            self.save_working_image(saves_base);
-        }
-
-        // --- Pending attachment preview ---
-        let mut remove_pending = false;
-        if let Some((_, tex, path)) = &self.pending_image {
-            let tex_id = tex.id();
-            let fname = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "이미지".to_string());
-            Frame::new()
-                .fill(Color32::from_rgb(0x16, 0x1E, 0x2E))
-                .stroke(Stroke::new(1.0_f32, ACCENT_DEFAULT.gamma_multiply(0.4_f32)))
-                .corner_radius(6.0_f32)
-                .inner_margin(Margin::symmetric(8, 4))
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.image((tex_id, vec2(32.0_f32, 32.0_f32)));
-                        ui.label(RichText::new(format!("붙여넣은 이미지: {fname}")).font(egui::FontId::monospace(10.5_f32)).color(TEXT_MAIN));
-                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            if ui.button("✕").on_hover_text("첨부 취소").clicked() {
-                                remove_pending = true;
-                            }
-                        });
-                    });
-                });
-            ui.add_space(4.0_f32);
-        }
-        if remove_pending {
-            self.pending_image = None;
-        }
-
-        // --- Input Area (Rounded card container with send button and comfortable bottom breathing margin) ---
         ui.add_space(4.0_f32);
-        let mut send_clicked = false;
-        // total = left margin 8 + item spacing + frame (inner margin 12*2 + stroke 2) + inner width + right margin 8
-        let card_w = (ui.available_width() - 8.0_f32 - ui.spacing().item_spacing.x - 26.0_f32 - 8.0_f32).max(120.0_f32);
 
-        let resp = ui.horizontal(|ui| {
-            ui.add_space(8.0_f32); // Left breathing margin
-            Frame::new()
-                .fill(Color32::from_rgb(0x13, 0x15, 0x1D))
-                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(0x2E, 0x32, 0x40)))
-                .corner_radius(12.0_f32)
-                .inner_margin(Margin::symmetric(12, 7))
-                .show(ui, |ui| {
-                    ui.set_width(card_w);
+        // -------------------------------------------------------------
+        // 4. [하단 프롬프트 입력 박스] SolidCraft 2-stage/3-stage Composer
+        // -------------------------------------------------------------
+        let mut send_triggered = false;
+
+        Frame::new()
+            .fill(Color32::from_rgb(0x13, 0x14, 0x18))
+            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(0x27, 0x2A, 0x34)))
+            .corner_radius(8.0_f32)
+            .inner_margin(Margin::symmetric(10, 8))
+            .show(ui, |ui| {
+                ui.vertical(|ui| {
+                    // 1단 (상단): Multi-line text edit
+                    let hint = match app_name.to_lowercase().as_str() {
+                        "photocraft" => "Ask the agent to edit the image...",
+                        "wordcraft" => "Ask the agent to edit the document...",
+                        _ => "Ask the agent to change the design...",
+                    };
+                    let text_resp = ui.add(
+                        egui::TextEdit::multiline(&mut self.input_text)
+                            .hint_text(hint)
+                            .frame(false)
+                            .desired_rows(2)
+                            .desired_width(ui.available_width()),
+                    );
+
+                    ui.add_space(4.0_f32);
+
+                    // 2단 (중간): + button, Edits ▾ dropdown, circular send button ↑
                     ui.horizontal(|ui| {
-                        let text_w = (card_w - 24.0_f32 - ui.spacing().item_spacing.x).max(60.0_f32);
-                        let text_resp = ui.add(
-                            egui::TextEdit::singleline(&mut self.input_text)
-                                .hint_text("요청사항을 입력하세요...")
-                                .frame(false)
-                                .desired_width(text_w),
-                        );
-
-                        let has_content = !self.input_text.trim().is_empty() || self.pending_image.is_some();
-                        let send_color = if has_content && !self.is_busy {
-                            accent_color
-                        } else {
-                            Color32::from_rgb(0x4A, 0x4E, 0x5E)
-                        };
-
-                        let send_btn = ui.add(
-                            egui::Button::new(RichText::new("➤").size(12.0_f32).color(send_color))
-                                .frame(false)
-                        ).on_hover_text("전송 (Enter)");
-                        if send_btn.clicked() {
-                            send_clicked = true;
+                        // + attach button
+                        if ui.add(egui::Button::new(RichText::new("+").size(13.0_f32).color(Color32::from_rgb(0xA1, 0xA1, 0xAA))).frame(false))
+                            .on_hover_text("Attach file or image")
+                            .clicked()
+                        {
+                            if target_hwnd != 0 {
+                                self.attach_current_view(ctx, target_hwnd, temp_dir);
+                            }
                         }
 
-                        text_resp
-                    }).inner
-                }).inner
-        }).inner;
-        ui.add_space(14.0_f32); // Bottom breathing margin so it never touches the window border
+                        // Edits dropdown
+                        egui::ComboBox::from_id_salt("composer_edit_mode")
+                            .selected_text(RichText::new(&self.edit_mode).size(10.5_f32).color(Color32::from_rgb(0xD4, 0xD4, 0xD8)))
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(&mut self.edit_mode, "Edits".to_string(), "Edits");
+                                ui.selectable_value(&mut self.edit_mode, "Questions".to_string(), "Questions");
+                                ui.selectable_value(&mut self.edit_mode, "Planning".to_string(), "Planning");
+                            });
 
-        // Directly intercept Ctrl+V while the input box is focused to check for image in clipboard
-        if resp.has_focus() {
-            let is_paste = ui.input(|i| {
-                let ctrl = i.modifiers.ctrl || i.modifiers.command;
-                let v = i.key_pressed(Key::V) || i.keys_down.contains(&Key::V);
-                let evt_paste = i.events.iter().any(|e| matches!(e, egui::Event::Paste(_)));
-                (ctrl && v) || evt_paste
+                        // Right: Circular send button ↑ (or ■ stop button when busy)
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            if self.is_busy {
+                                if ui.add(egui::Button::new(RichText::new("■").size(12.0_f32).color(Color32::from_rgb(0xEF, 0x44, 0x44))).frame(false))
+                                    .on_hover_text("Stop agent")
+                                    .clicked()
+                                {
+                                    self.is_busy = false;
+                                }
+                            } else {
+                                let has_text = !self.input_text.trim().is_empty();
+                                let send_bg = if has_text { accent_blue } else { Color32::from_rgb(0x37, 0x41, 0x51) };
+                                let send_btn = ui.add(
+                                    egui::Button::new(RichText::new("↑").strong().size(13.0_f32).color(Color32::WHITE))
+                                        .fill(send_bg)
+                                        .corner_radius(12.0_f32),
+                                );
+                                if send_btn.clicked() {
+                                    send_triggered = true;
+                                }
+                            }
+                        });
+                    });
+
+                    ui.add_space(2.0_f32);
+                    ui.separator();
+                    ui.add_space(2.0_f32);
+
+                    // 3단 (하단 컨텍스트 바): Checkbox [Attach view], [Attach selection], and badge [Full context]
+                    ui.horizontal(|ui| {
+                        ui.checkbox(&mut self.attach_view, RichText::new("Attach view").size(10.0_f32).color(Color32::from_rgb(0xA1, 0xA1, 0xAA)))
+                            .on_hover_text("Send a picture of the current view with the message");
+                        ui.checkbox(&mut self.attach_selection, RichText::new("Attach selection").size(10.0_f32).color(Color32::from_rgb(0x71, 0x71, 0x7A)))
+                            .on_hover_text("Send selected elements/layers with the message");
+
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            Frame::new()
+                                .fill(Color32::from_rgb(0x1F, 0x24, 0x30))
+                                .corner_radius(3.0_f32)
+                                .inner_margin(Margin::symmetric(4, 1))
+                                .show(ui, |ui| {
+                                    ui.label(RichText::new("Full context").font(egui::FontId::monospace(8.5_f32)).color(Color32::from_rgb(0x94, 0xA3, 0xB8)));
+                                });
+                        });
+                    });
+
+                    // Send on Enter (when not holding Shift)
+                    if text_resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter) && !i.modifiers.shift) {
+                        send_triggered = true;
+                    }
+                });
             });
-            if is_paste && self.try_paste_image(ctx, temp_dir) {
-                // Clean up any path suffix accidentally inserted into text edit
-                let lower = self.input_text.to_lowercase();
-                if lower.ends_with(".png")
-                    || lower.ends_with(".jpg")
-                    || lower.ends_with(".jpeg")
-                    || lower.ends_with(".webp")
-                    || lower.ends_with(".bmp")
-                {
-                    self.input_text.clear();
+
+        // Trigger send
+        if send_triggered && !self.is_busy && (!self.input_text.trim().is_empty() || self.pending_image.is_some()) {
+            if self.attach_view && self.pending_image.is_none() && target_hwnd != 0 {
+                self.attach_current_view(ctx, target_hwnd, temp_dir);
+            }
+            if !self.is_connected {
+                self.is_connected = true;
+                if self.selected_agent == "No agent found" {
+                    self.selected_agent = "Google Antigravity".to_string();
                 }
             }
-        }
-
-        // Press Enter or click ➤ to send
-        let enter_pressed = (resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)))
-            || (resp.has_focus() && ui.input(|i| i.key_pressed(Key::Enter)))
-            || send_clicked;
-        if enter_pressed
-            && !self.is_busy
-            && (!self.input_text.trim().is_empty() || self.pending_image.is_some())
-        {
             self.send(saves_base);
-            resp.request_focus();
         }
     }
 }
 
-// ---------------------------------------------------------------------------
 // AI Execution & Image/Document Processing Engine
 // ---------------------------------------------------------------------------
 
