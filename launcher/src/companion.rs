@@ -173,6 +173,7 @@ pub struct CompanionState {
     pub model_name: String,
     pub base_url: String,
     pub show_settings_panel: bool,
+    #[allow(dead_code)]
     pub show_toolbar_button: bool,
     pub show_view_menu: bool,
     pub require_approval: bool,
@@ -183,7 +184,9 @@ pub struct CompanionState {
     pub attach_view: bool,
     pub attach_selection: bool,
     pub edit_mode: String,
+    #[allow(dead_code)]
     pub last_toolbar_pos: Option<[f32; 2]>,
+    #[allow(dead_code)]
     pub last_toolbar_size: Option<[f32; 2]>,
     pub status_msg: Option<String>,
     #[allow(dead_code)]
@@ -237,7 +240,7 @@ impl CompanionState {
             model_name: "gemini-2.5-flash".to_string(),
             base_url: "https://generativelanguage.googleapis.com".to_string(),
             show_settings_panel: false,
-            show_toolbar_button: true,
+            show_toolbar_button: false,
             show_view_menu: false,
             require_approval: true,
             pending_approval: None,
@@ -751,7 +754,6 @@ pub fn try_paste_image(&mut self, ctx: &egui::Context, temp_dir: &Path) -> bool 
         }
 
         let vp_id = ViewportId::from_hash_of(format!("companion_dock_{app_id}"));
-        let tb_vp_id = ViewportId::from_hash_of(format!("companion_toolbar_{app_id}"));
         let ppp = ctx.pixels_per_point().max(0.1);
         let tb_title = format!("{app_name} Toolbar");
         let companion_title = format!("{app_name} Assistant");
@@ -780,114 +782,16 @@ pub fn try_paste_image(&mut self, ctx: &egui::Context, temp_dir: &Path) -> bool 
         // Automatically restores the target app window to full width when Assistant is minimized/closed.
         let dock_w_pt = 320.0_f32;
         let dock_w_px = (dock_w_pt * ppp).round() as i32;
-        let (app_rect, dock_rect) = crate::apps::apply_window_split_dock(
+        let (_app_rect, dock_rect) = crate::apps::apply_window_split_dock(
             target_hwnd,
             dock_w_px,
             !self.is_minimized,
             raw_app_rect,
         );
 
-        let left_pt = app_rect[0] / ppp;
-        let right_pt = app_rect[2] / ppp;
-        let top_pt = app_rect[1] / ppp;
-
-        // 1. Top toolbar button (Ai Assistant + ⚙ 설정)
-        // Positioned neatly in the top menu bar matching the target app's native dark theme.
-        if self.show_toolbar_button {
-            let tb_w = 142.0_f32;
-            let tb_h = 24.0_f32;
-            // In PhotoCraft, place naturally right after '도움말(H)' (~505px); in other apps adapt smoothly
-            let tb_x = if app_id.eq_ignore_ascii_case("photocraft") {
-                (left_pt + 508.0_f32).min(right_pt - tb_w - 200.0_f32)
-            } else {
-                (right_pt - tb_w - 240.0_f32).max(left_pt + 380.0_f32)
-            };
-            let tb_y = top_pt + 3.0_f32;
-
-            let tb_x_px = (tb_x * ppp).round() as i32;
-            let tb_y_px = (tb_y * ppp).round() as i32;
-            let tb_w_px = (tb_w * ppp).round() as i32;
-            let tb_h_px = (tb_h * ppp).round() as i32;
-
-            let tb_builder = ViewportBuilder::default()
-                .with_title(tb_title.clone())
-                .with_inner_size([tb_w, tb_h])
-                .with_resizable(false)
-                .with_visible(true)
-                .with_decorations(false)
-                .with_transparent(false)
-                .with_position([tb_x, tb_y]);
-
-            ctx.show_viewport_immediate(tb_vp_id, tb_builder, |ctx, _class| {
-                ctx.request_repaint_after(std::time::Duration::from_millis(32));
-                if self.last_toolbar_pos != Some([tb_x, tb_y]) {
-                    ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(tb_x, tb_y)));
-                    self.last_toolbar_pos = Some([tb_x, tb_y]);
-                }
-                if self.last_toolbar_size != Some([tb_w, tb_h]) {
-                    ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(tb_w, tb_h)));
-                    self.last_toolbar_size = Some([tb_w, tb_h]);
-                }
-                crate::apps::sync_companion_window(&tb_title, target_hwnd, true, tb_x_px, tb_y_px, tb_w_px, tb_h_px);
-
-                let accent_blue = Color32::from_rgb(0x3B, 0x82, 0xF6);
-                let panel_open = !self.is_minimized;
-
-                // Native app menu bar styled frame (#2B2C31 background, #3E4048 border)
-                egui::CentralPanel::default()
-                    .frame(
-                        Frame::new()
-                            .fill(Color32::from_rgb(0x28, 0x29, 0x2E))
-                            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(0x3E, 0x40, 0x48)))
-                            .corner_radius(4.0_f32)
-                            .inner_margin(Margin::symmetric(6, 2)),
-                    )
-                    .show(ctx, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 4.0_f32;
-
-                            // Ai Assistant clickable toggle button
-                            let btn_color = if panel_open { accent_blue } else { Color32::from_rgb(0xE4, 0xE4, 0xEB) };
-                            let ai_btn = ui.add(
-                                egui::Button::new(
-                                    RichText::new("✦ Ai Assistant")
-                                        .size(11.5_f32)
-                                        .strong()
-                                        .color(btn_color),
-                                )
-                                .frame(false),
-                            )
-                            .on_hover_text("단축키: Ctrl + Shift + A");
-
-                            if ai_btn.clicked() {
-                                self.is_minimized = !self.is_minimized;
-                            }
-
-                            // Subtle vertical divider
-                            ui.separator();
-
-                            // Settings gear icon ⚙
-                            let gear_color = if self.show_settings_panel { accent_blue } else { Color32::from_rgb(0xA1, 0xA1, 0xAA) };
-                            let gear_btn = ui.add(
-                                egui::Button::new(
-                                    RichText::new("⚙")
-                                        .size(12.0_f32)
-                                        .color(gear_color),
-                                )
-                                .frame(false),
-                            )
-                            .on_hover_text("설정 (Preferences > AI)");
-
-                            if gear_btn.clicked() {
-                                self.is_minimized = false;
-                                self.show_settings_panel = !self.show_settings_panel;
-                            }
-                        });
-                    });
-            });
-        } else {
-            crate::apps::sync_companion_window(&tb_title, target_hwnd, false, -15000, -15000, 1, 1);
-        }
+        // 1. Top toolbar overlay is completely disabled per user preference:
+        // AI Assistant is invoked and toggled exclusively via the global Ctrl + Shift + A shortcut.
+        crate::apps::sync_companion_window(&tb_title, target_hwnd, false, -15000, -15000, 1, 1);
 
         // 2. Rightmost Split-Docked Assistant Panel
         // Keep the viewport alive inside eframe even when minimized (parked offscreen at -15000,-15000)
