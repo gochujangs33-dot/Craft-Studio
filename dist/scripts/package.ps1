@@ -17,12 +17,13 @@ if ($iscc) {
     if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed" }
     Write-Host "Installer written to $out"
 } else {
-    Write-Warning "Inno Setup 6 not found (winget install JRSoftware.InnoSetup). Creating portable zip instead."
     $zip = Join-Path $out "ArtCraftStudio-portable-x64.zip"
     if (Test-Path $zip) { Remove-Item $zip -Force }
-    tar -a -c -f $zip --exclude="*.log" --exclude="*.old" -C $dist .
-    if ($LASTEXITCODE -ne 0 -or -not (Test-Path $zip)) {
-        Compress-Archive -Path "$dist\*" -DestinationPath $zip -CompressionLevel Optimal
+    $pkgPy = Join-Path $PSScriptRoot "package.py"
+    if (Test-Path $pkgPy) {
+        python $pkgPy
+    } else {
+        tar -a -c -f $zip --exclude="*.log" --exclude="*.old" --exclude="ArtCraftStudio.app" -C $dist .
     }
     Write-Host "Portable zip written to $zip"
 }
