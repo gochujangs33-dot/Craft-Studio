@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>ArtCraft Studio 설치 및 실행 가이드</title>
+    <style>
+        @page {
+            size: A4 portrait;
+            margin: 0;
+        }
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+        }
+        body {
+            font-family: 'Malgun Gothic', '맑은 고딕', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            color: #1e293b;
+            background: #ffffff;
+            line-height: 1.5;
+            font-size: 13px;
+        }
+        .page {
+            width: 210mm;
+            min-height: 297mm;
+            padding: 16mm 18mm;
+            margin: 0 auto;
+            position: relative;
+            background: #ffffff;
+            page-break-after: always;
+        }
+        .page:last-child {
+            page-break-after: avoid;
+        }
+        .header {
+            border-bottom: 2px solid #2563eb;
+            padding-bottom: 12px;
+            margin-bottom: 18px;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-end;
+        }
+        .header-title h1 {
+            font-size: 23px;
+            font-weight: 800;
+            color: #0f172a;
+            letter-spacing: -0.5px;
+            margin-bottom: 4px;
+        }
+        .header-title p {
+            font-size: 12px;
+            color: #64748b;
+        }
+        .header-badge {
+            background: #eff6ff;
+            color: #2563eb;
+            border: 1px solid #bfdbfe;
+            padding: 5px 12px;
+            border-radius: 20px;
+            font-size: 11.5px;
+            font-weight: 700;
+        }
+        .step-card {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 10px;
+            padding: 16px 18px;
+            margin-bottom: 18px;
+        }
+        .step-header {
+            display: flex;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+        .step-num {
+            background: #2563eb;
+            color: #ffffff;
+            width: 26px;
+            height: 26px;
+            border-radius: 50%;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 13px;
+            font-weight: 800;
+            margin-right: 10px;
+            flex-shrink: 0;
+        }
+        .step-title {
+            font-size: 16px;
+            font-weight: 700;
+            color: #0f172a;
+        }
+        .step-desc {
+            font-size: 13px;
+            color: #334155;
+            margin-bottom: 10px;
+            line-height: 1.6;
+        }
+        .step-desc strong {
+            color: #0f172a;
+        }
+        .link-box {
+            background: #ffffff;
+            border: 1px solid #cbd5e1;
+            padding: 7px 12px;
+            border-radius: 6px;
+            font-size: 12px;
+            color: #2563eb;
+            word-break: break-all;
+            margin-bottom: 10px;
+            display: block;
+            font-weight: 600;
+        }
+        .img-container {
+            border: 1px solid #cbd5e1;
+            border-radius: 8px;
+            overflow: hidden;
+            background: #0d1117;
+            text-align: center;
+            margin-top: 10px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.04);
+        }
+        .img-container img {
+            max-width: 100%;
+            display: block;
+            margin: 0 auto;
+        }
+        .tip-box {
+            background: #fefce8;
+            border: 1px solid #fef08a;
+            border-left: 4px solid #eab308;
+            padding: 10px 14px;
+            border-radius: 6px;
+            font-size: 12px;
+            color: #854d0e;
+            margin-top: 10px;
+            line-height: 1.5;
+        }
+        .smartscreen-card {
+            background: #0078d4;
+            color: #ffffff;
+            border-radius: 8px;
+            padding: 16px 18px;
+            margin-top: 12px;
+            box-shadow: 0 4px 6px rgba(0,120,212,0.15);
+        }
+        .smartscreen-card h4 {
+            font-size: 14px;
+            font-weight: 700;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .smartscreen-card p {
+            font-size: 12.5px;
+            opacity: 0.95;
+            line-height: 1.6;
+        }
+        .smartscreen-steps {
+            background: rgba(255, 255, 255, 0.12);
+            border-radius: 6px;
+            padding: 12px 14px;
+            margin-top: 10px;
+        }
+        .smartscreen-steps li {
+            list-style: none;
+            margin-bottom: 6px;
+            font-size: 12.5px;
+            display: flex;
+            align-items: center;
+        }
+        .smartscreen-steps li:last-child {
+            margin-bottom: 0;
+        }
+        .badge-step {
+            background: #ffffff;
+            color: #0078d4;
+            font-weight: 800;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 11px;
+            margin-right: 8px;
+            flex-shrink: 0;
+        }
+        .btn-highlight {
+            background: #ffffff;
+            color: #0078d4;
+            font-weight: 800;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 11.5px;
+            margin: 0 3px;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+        }
+        .page-footer {
+            position: absolute;
+            bottom: 12mm;
+            left: 18mm;
+            right: 18mm;
+            text-align: center;
+            font-size: 11px;
+            color: #94a3b8;
+            border-top: 1px solid #e2e8f0;
+            padding-top: 8px;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- ==================== PAGE 1 ==================== -->
+    <div class="page">
+        <div class="header">
+            <div class="header-title">
+                <h1>ArtCraft Studio 다운로드 및 실행 가이드</h1>
+                <p>Windows 10 / 11 64비트 공식 포터블 버전 설치 매뉴얼</p>
+            </div>
+            <div class="header-badge">Windows x64 Portable</div>
+        </div>
+
+        <!-- STEP 1 -->
+        <div class="step-card">
+            <div class="step-header">
+                <span class="step-num">1</span>
+                <span class="step-title">공식 릴리스 접속 및 Windows 버전 다운로드</span>
+            </div>
+            <p class="step-desc">
+                웹 브라우저를 열고 아래 공식 릴리스 페이지 링크에 접속합니다:<br>
+            </p>
+            <div class="link-box">
+                🔗 공식 최신 릴리스 페이지: https://github.com/gochujangs33-dot/Craft-Studio/releases/latest<br>
+                ⚡ 최신 버전 즉시 자동 다운로드: https://github.com/gochujangs33-dot/Craft-Studio/releases/latest/download/ArtCraftStudio-portable-x64.zip
+            </div>
+            <p class="step-desc">
+                페이지 하단 <strong>Assets</strong> 목록에서 <strong>3번째 파일</strong>인 <strong style="color: #ef4444; font-size: 13.5px;">ArtCraftStudio-portable-x64.zip</strong> 파일을 클릭하여 다운로드합니다. (클릭 시 브라우저에서 자동 다운로드 시작)
+            </p>
+            <div class="img-container">
+                <img src="file:///C:/Users/0op64/.gemini/antigravity/scratch/ArtCraft/guide_assets_highlighted.png" alt="Assets 3번째 파일 강조">
+            </div>
+            <div class="tip-box">
+                💡 <strong>다운로드 안내:</strong> 
+                <strong>ArtCraftStudio-portable-x64.zip (약 1.49 GB)</strong> 파일은 런처뿐만 아니라 PhotoCraft, SolidCraft 등 17종의 모든 제작 프로그램이 사전 완비된 풀 패키지입니다. 추가 설치 없이 즉시 오프라인에서도 작동합니다.
+            </div>
+        </div>
+
+        <!-- STEP 2 -->
+        <div class="step-card">
+            <div class="step-header">
+                <span class="step-num">2</span>
+                <span class="step-title">다운로드 폴더에서 압축 해제하기</span>
+            </div>
+            <p class="step-desc">
+                브라우저 다운로드가 완료되면 내 PC의 <strong>다운로드</strong> 폴더로 이동합니다.<br>
+                다운받은 <strong>ArtCraftStudio-portable-x64.zip</strong> 압축 파일을 마우스 우클릭한 후 <strong>[압축 풀기(T)...]</strong>를 선택하여 원하는 위치에 압축을 풉니다.
+            </p>
+            <div class="img-container" style="background: #18181b; padding: 10px;">
+                <img src="file:///C:/Users/0op64/.gemini/antigravity/brain/077ee0e3-27e9-43ec-9bf7-160e900428e1/.user_uploaded/media_1793916408430_97bf963b.png" style="max-height: 85px;" alt="압축 파일 아이콘">
+            </div>
+        </div>
+
+        <div class="page-footer">
+            ArtCraft Studio Team · Official Guide · 1 / 2
+        </div>
+    </div>
+
+    <!-- ==================== PAGE 2 ==================== -->
+    <div class="page">
+        <div class="header">
+            <div class="header-title">
+                <h1>ArtCraft Studio 다운로드 및 실행 가이드</h1>
+                <p>실행 방법 및 Windows SmartScreen 예외 처리 안내</p>
+            </div>
+            <div class="header-badge">Step 3 & 4</div>
+        </div>
+
+        <!-- STEP 3 -->
+        <div class="step-card">
+            <div class="step-header">
+                <span class="step-num">3</span>
+                <span class="step-title">압축 해제된 폴더에서 ArtCraftStudio 실행</span>
+            </div>
+            <p class="step-desc">
+                압축이 풀린 <strong>ArtCraftStudio-portable-x64</strong> 폴더 안으로 들어갑니다.<br>
+                폴더 최상단에 위치한 파란색 나비/화살표 아이콘의 <strong>ArtCraftStudio</strong> (또는 <strong>ArtCraftStudio.exe</strong>) 응용 프로그램을 더블클릭하여 실행합니다.
+            </p>
+            <div class="img-container">
+                <img src="file:///C:/Users/0op64/.gemini/antigravity/scratch/ArtCraft/guide_folder_highlighted.png" alt="ArtCraftStudio 실행 파일 강조">
+            </div>
+            <div class="tip-box">
+                💡 런처가 실행되면 좌측 사이드바와 카드 목록에서 17종의 모든 프로그램을 원클릭으로 바로 실행하거나 최신 버전으로 관리할 수 있습니다.
+            </div>
+        </div>
+
+        <!-- STEP 4 -->
+        <div class="step-card" style="margin-bottom: 0;">
+            <div class="step-header">
+                <span class="step-num">4</span>
+                <span class="step-title">Windows SmartScreen 팝업이 뜰 경우 대처 방법</span>
+            </div>
+            <p class="step-desc">
+                오픈소스 독립 배포 소프트웨어 특성상 최초 실행 시 Windows Defender SmartScreen의 <strong>"Windows의 PC 보호"</strong> 파란색 경고 알림 창이 나타날 수 있습니다. 이는 디지털 인증서가 없는 신규 배포 파일에 대해 Windows가 띄우는 정상적인 보안 확인 창입니다.
+            </p>
+
+            <div class="smartscreen-card">
+                <h4>🛡️ SmartScreen 통과 2단계</h4>
+                <p>알림 창이 나타나면 아래 순서대로 클릭하여 간단히 실행할 수 있습니다:</p>
+                <div class="smartscreen-steps">
+                    <li>
+                        <span class="badge-step">1</span>
+                        알림 창 본문에 있는 밑줄 친 <span class="btn-highlight">추가 정보</span> 텍스트를 클릭합니다.
+                    </li>
+                    <li>
+                        <span class="badge-step">2</span>
+                        화면 우측 하단에 새롭게 나타나는 <span class="btn-highlight">실행</span> 버튼을 클릭합니다.
+                    </li>
+                </div>
+            </div>
+        </div>
+
+        <div class="page-footer">
+            ArtCraft Studio Team · Official Guide · 2 / 2 · https://github.com/gochujangs33-dot/Craft-Studio
+        </div>
+    </div>
+
+</body>
+</html>
