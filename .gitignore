@@ -5,6 +5,7 @@
 # Distribution artifacts & downloaded apps (fetch via scripts/fetch-apps.ps1)
 /apps/
 /dist/apps/
+/SavedFiles/
 /dist/SavedFiles/
 /dist/custom_apps/
 /dist/ArtCraftStudio.exe*
