@@ -323,11 +323,13 @@ pub fn scan(reg: &Registry, apps_dir: &Path, exe_dir: &Path, saves_base: &Path) 
 
             let mut official_exe = None;
             let mut official_dir = apps_dir.join(&meta.id);
+            let mut found_dir = None;
 
             for cand in candidates {
                 if let Some(found_exe) = detect_exe(&cand, &meta.id, meta.exe.as_deref()) {
                     official_exe = Some(found_exe);
-                    official_dir = cand;
+                    official_dir = cand.clone();
+                    found_dir = Some(cand);
                     break;
                 }
             }
@@ -344,7 +346,13 @@ pub fn scan(reg: &Registry, apps_dir: &Path, exe_dir: &Path, saves_base: &Path) 
             };
 
             let version_file = dir.join(".version");
-            let version = std::fs::read_to_string(&version_file).ok().map(|s| s.trim().to_string());
+            let mut version = std::fs::read_to_string(&version_file).ok().map(|s| s.trim().to_string());
+            if version.is_none() {
+                if let Some(fd) = &found_dir {
+                    let cand_ver = fd.join(".version");
+                    version = std::fs::read_to_string(&cand_ver).ok().map(|s| s.trim().to_string());
+                }
+            }
             let date = std::fs::metadata(&version_file)
                 .or_else(|_| exe.as_ref().map(std::fs::metadata).unwrap_or_else(|| std::fs::metadata(&dir)))
                 .and_then(|m| m.modified())

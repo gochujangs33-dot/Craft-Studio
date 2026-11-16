@@ -18,25 +18,25 @@ os.makedirs(CACHE_DIR, exist_ok=True)
 os.makedirs(DIST_APPS, exist_ok=True)
 os.makedirs(LOCAL_APPS, exist_ok=True)
 
-# 17 Craft Apps with latest releases (Updated 2026-11-06 upstream)
+# 17 Craft Apps with latest releases (Updated 2026-11-12 ~ 2026-11-14 upstream)
 APPS_TO_UPDATE = [
-    ("photocraft", "storytold/photocraft", "0.21.0", "photocraft-0.21.0-windows-x64-portable.zip"),
-    ("vectorcraft", "storytold/vectorcraft", "0.22.0", "vectorcraft-0.22.0-windows-x64-portable.zip"),
-    ("filmcraft", "storytold/filmcraft", "0.18.0", "filmcraft-0.18.0-windows-x64-portable.zip"),
-    ("lightcraft", "storytold/lightcraft", "0.19.0", "lightcraft-0.19.0-windows-x64-portable.zip"),
-    ("pdfcraft", "storytold/pdfcraft", "0.19.0", "pdfcraft-0.19.0-windows-x64-portable.zip"),
-    ("effectcraft", "storytold/effectcraft", "0.22.0", "effectcraft-0.22.0-windows-x64-portable.zip"),
-    ("designcraft", "storytold/designcraft", "0.18.0", "designcraft-0.18.0-windows-x64-portable.zip"),
-    ("wordcraft", "storytold/wordcraft", "0.16.0", "wordcraft-0.16.0-windows-x64-portable.zip"),
-    ("deckcraft", "storytold/deckcraft", "0.16.0", "deckcraft-0.16.0-windows-x64-portable.zip"),
-    ("gridcraft", "storytold/gridcraft", "0.17.0", "gridcraft-0.17.0-windows-x64-portable.zip"),
-    ("cadcraft", "storytold/cadcraft", "0.18.0", "cadcraft-0.18.0-windows-x64-portable.zip"),
-    ("solidcraft", "tangency-labs/solidcraft", "0.30.1", "solidcraft-0.30.1-windows-x64-portable.zip"),
-    ("soundcraft", "storytold/soundcraft", "0.18.0", "soundcraft-0.18.0-windows-x64-portable.zip"),
-    ("figcraft", "storytold/figcraft", "0.16.0", "figcraft-0.16.0-windows-x64-portable.zip"),
-    ("texturecraft", "storytold/texturecraft", "0.4.0", "texturecraft-0.4.0-windows-x64-portable.zip"),
-    ("materialcraft", "storytold/materialcraft", "0.2.0", "materialcraft-0.2.0-windows-x64-portable.zip"),
-    ("craft-anything", "storytold/craft-anything", "0.5.0", "craft-anything-0.5.0-windows-x64-portable.zip"),
+    ("photocraft", "storytold/photocraft", "0.23.1", "photocraft-0.23.1-windows-x64-portable.zip"),
+    ("vectorcraft", "storytold/vectorcraft", "0.24.1", "vectorcraft-0.24.1-windows-x64-portable.zip"),
+    ("filmcraft", "storytold/filmcraft", "0.20.1", "filmcraft-0.20.1-windows-x64-portable.zip"),
+    ("lightcraft", "storytold/lightcraft", "0.21.1", "lightcraft-0.21.1-windows-x64-portable.zip"),
+    ("pdfcraft", "storytold/pdfcraft", "0.21.1", "pdfcraft-0.21.1-windows-x64-portable.zip"),
+    ("effectcraft", "storytold/effectcraft", "0.24.1", "effectcraft-0.24.1-windows-x64-portable.zip"),
+    ("designcraft", "storytold/designcraft", "0.20.1", "designcraft-0.20.1-windows-x64-portable.zip"),
+    ("wordcraft", "storytold/wordcraft", "0.18.1", "wordcraft-0.18.1-windows-x64-portable.zip"),
+    ("deckcraft", "storytold/deckcraft", "0.18.1", "deckcraft-0.18.1-windows-x64-portable.zip"),
+    ("gridcraft", "storytold/gridcraft", "0.19.1", "gridcraft-0.19.1-windows-x64-portable.zip"),
+    ("cadcraft", "storytold/cadcraft", "0.20.1", "cadcraft-0.20.1-windows-x64-portable.zip"),
+    ("solidcraft", "tangency-labs/solidcraft", "0.42.0", "solidcraft-0.42.0-windows-x64-portable.zip"),
+    ("soundcraft", "storytold/soundcraft", "0.20.1", "soundcraft-0.20.1-windows-x64-portable.zip"),
+    ("figcraft", "storytold/figcraft", "0.18.1", "figcraft-0.18.1-windows-x64-portable.zip"),
+    ("texturecraft", "storytold/texturecraft", "0.6.1", "texturecraft-0.6.1-windows-x64-portable.zip"),
+    ("materialcraft", "storytold/materialcraft", "0.4.1", "materialcraft-0.4.1-windows-x64-portable.zip"),
+    ("craft-anything", "storytold/craft-anything", "0.6.1", "craft-anything-0.6.1-windows-x64-portable.zip"),
 ]
 
 def download_and_extract(item):

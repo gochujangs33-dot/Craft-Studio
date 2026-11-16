@@ -5,9 +5,10 @@ APP_ID="$1"
 REPO_URL="$2"
 DEST_DIR="$3"
 SUITE_REPO="${4:-gochujangs33-dot/Craft-Studio}"
+TARGET_VER="${5:-}"
 
 if [ -z "$APP_ID" ] || [ -z "$DEST_DIR" ]; then
-    echo "Usage: update-app.sh <AppId> <RepoUrl> <DestDir> [SuiteRepo]"
+    echo "Usage: update-app.sh <AppId> <RepoUrl> <DestDir> [SuiteRepo] [TargetVersion]"
     exit 1
 fi
 
@@ -30,36 +31,46 @@ rm -rf "$TMP_DIR" 2>/dev/null || true
 mkdir -p "$TMP_DIR"
 
 DOWNLOAD_URL=""
-LATEST_TAG="latest"
+LATEST_TAG="${TARGET_VER:-latest}"
 
 # Tier 0: Direct manifest version.json lookup from raw.githubusercontent.com (Immune to API rate limits!)
 VJSON=$(curl -k -L -s --max-time 10 -A "ArtCraftStudio-Updater" "https://raw.githubusercontent.com/${SUITE_REPO}/main/version.json" 2>/dev/null || true)
-if [ -n "$VJSON" ]; then
+APP_VER=""
+if [ -n "$TARGET_VER" ]; then
+    APP_VER="$TARGET_VER"
+    LATEST_TAG="$TARGET_VER"
+elif [ -n "$VJSON" ]; then
     APP_VER=$(echo "$VJSON" | grep -A 5 "\"${APP_ID}\":" | grep -o '"version": *"[^"]*"' | head -n 1 | sed -E 's/.*"([^"]+)".*/\1/' || true)
     if [ -n "$APP_VER" ]; then
         LATEST_TAG="$APP_VER"
-        REPO_PATH=$(echo "$REPO_URL" | sed 's|^https://github.com/||')
-        
-        M_ARCH=$(uname -m 2>/dev/null || echo "arm64")
-        CANDIDATES=(
-            "https://github.com/${REPO_PATH}/releases/download/v${APP_VER}/${APP_ID}-${APP_VER}-macos-universal.dmg"
-            "https://github.com/${REPO_PATH}/releases/download/v${APP_VER}/${APP_ID}-${APP_VER}-macos-${M_ARCH}.dmg"
-            "https://github.com/${REPO_PATH}/releases/download/v${APP_VER}/${APP_ID}-macos-universal.dmg"
-            "https://github.com/${REPO_PATH}/releases/download/v${APP_VER}/${APP_ID}-macos-${M_ARCH}.dmg"
-            "https://github.com/${REPO_PATH}/releases/download/v${APP_VER}/HOP-macos-${M_ARCH}.dmg"
-            "https://github.com/${REPO_PATH}/releases/download/v${APP_VER}/HOP-macos-arm64.dmg"
-            "https://github.com/${REPO_PATH}/releases/latest/download/${APP_ID}-macos-universal.dmg"
-            "https://github.com/${REPO_PATH}/releases/latest/download/HOP-macos-arm64.dmg"
-        )
-        for cand in "${CANDIDATES[@]}"; do
-            HTTP_CODE=$(curl -k -s -o /dev/null -w "%{http_code}" -L --max-time 6 "$cand" 2>/dev/null || true)
-            if [ "$HTTP_CODE" = "200" ]; then
-                DOWNLOAD_URL="$cand"
-                echo "PROGRESS:15:매니페스트 기반 직접 다운로드 채널 연결: v${LATEST_TAG}"
-                break
-            fi
-        done
     fi
+fi
+
+if [ -n "$APP_VER" ]; then
+    REPO_PATH=$(echo "$REPO_URL" | sed 's|^https://github.com/||')
+    
+    M_ARCH=$(uname -m 2>/dev/null || echo "arm64")
+    CANDIDATES=(
+        "https://github.com/${REPO_PATH}/releases/download/v${APP_VER}/${APP_ID}-${APP_VER}-macos-universal.dmg"
+        "https://github.com/${REPO_PATH}/releases/download/v${APP_VER}/${APP_ID}-${APP_VER}-macos-${M_ARCH}.dmg"
+        "https://github.com/${REPO_PATH}/releases/download/v${APP_VER}/${APP_ID}-macos-universal.dmg"
+        "https://github.com/${REPO_PATH}/releases/download/v${APP_VER}/${APP_ID}-macos-${M_ARCH}.dmg"
+        "https://github.com/${REPO_PATH}/releases/download/${APP_VER}/${APP_ID}-${APP_VER}-macos-universal.dmg"
+        "https://github.com/${REPO_PATH}/releases/download/${APP_VER}/${APP_ID}-${APP_VER}-macos-${M_ARCH}.dmg"
+        "https://github.com/${REPO_PATH}/releases/download/v${APP_VER}/HOP-macos-${M_ARCH}.dmg"
+        "https://github.com/${REPO_PATH}/releases/download/v${APP_VER}/HOP-macos-arm64.dmg"
+        "https://github.com/${REPO_PATH}/releases/latest/download/${APP_ID}-macos-universal.dmg"
+        "https://github.com/${REPO_PATH}/releases/latest/download/${APP_ID}-macos-${M_ARCH}.dmg"
+        "https://github.com/${REPO_PATH}/releases/latest/download/HOP-macos-arm64.dmg"
+    )
+    for cand in "${CANDIDATES[@]}"; do
+        HTTP_CODE=$(curl -k -s -o /dev/null -w "%{http_code}" -L --max-time 6 "$cand" 2>/dev/null || true)
+        if [ "$HTTP_CODE" = "200" ]; then
+            DOWNLOAD_URL="$cand"
+            echo "PROGRESS:15:매니페스트 기반 직접 다운로드 채널 연결: v${LATEST_TAG}"
+            break
+        fi
+    done
 fi
 
 # 1. Check user suite repo releases

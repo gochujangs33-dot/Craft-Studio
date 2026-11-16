@@ -173,12 +173,13 @@ impl Launcher {
         };
 
         // 3M-style Startup Auto-Check: automatically match versions from GitHub on launch
-        let repos: Vec<(String, String)> = launcher
+        let repos: Vec<(String, String, bool)> = launcher
             .entries
             .iter()
             .map(|e| {
+                let is_custom = launcher.state.custom_repos.contains_key(&e.meta.id);
                 let r = launcher.state.custom_repos.get(&e.meta.id).cloned().unwrap_or_else(|| e.meta.repo.clone());
-                (e.meta.id.clone(), r)
+                (e.meta.id.clone(), r, is_custom)
             })
             .collect();
         launcher.updater.check_all_updates(repos);
@@ -438,12 +439,13 @@ impl Launcher {
             }
             Action::CheckUpdates => {
                 self.manual_check_requested = true;
-                let repos: Vec<(String, String)> = self
+                let repos: Vec<(String, String, bool)> = self
                     .entries
                     .iter()
                     .map(|e| {
+                        let is_custom = self.state.custom_repos.contains_key(&e.meta.id);
                         let r = self.state.custom_repos.get(&e.meta.id).cloned().unwrap_or_else(|| e.meta.repo.clone());
-                        (e.meta.id.clone(), r)
+                        (e.meta.id.clone(), r, is_custom)
                     })
                     .collect();
                 self.updater.check_all_updates(repos);

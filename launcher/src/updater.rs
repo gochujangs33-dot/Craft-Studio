@@ -172,11 +172,18 @@ impl UpdateManager {
 
     fn read_local_manifest(exe_dir: &Path) -> HashMap<String, String> {
         let mut map = HashMap::new();
-        let candidates = [
+        #[allow(unused_mut)]
+        let mut candidates = vec![
             exe_dir.join("version.json"),
             exe_dir.join("../version.json"),
+            exe_dir.join("../Resources/version.json"),
+            exe_dir.join("../../Resources/version.json"),
             PathBuf::from("version.json"),
         ];
+        #[cfg(target_os = "macos")]
+        if let Some(home) = std::env::var_os("HOME") {
+            candidates.push(PathBuf::from(home).join("Library/Application Support/ArtCraftStudio/version.json"));
+        }
         for path in &candidates {
             if path.exists() {
                 if let Ok(content) = std::fs::read_to_string(path) {
@@ -196,8 +203,19 @@ impl UpdateManager {
             }
         }
 
-        // Also check actual installed .version files inside apps/ and dist/apps/
-        let app_roots = [exe_dir.join("apps"), exe_dir.join("dist/apps"), PathBuf::from("dist/apps")];
+        // Also check actual installed .version files inside apps/, Resources/apps/, and user Application Support
+        #[allow(unused_mut)]
+        let mut app_roots = vec![
+            exe_dir.join("apps"),
+            exe_dir.join("dist/apps"),
+            PathBuf::from("dist/apps"),
+            exe_dir.join("../Resources/apps"),
+            exe_dir.join("../../Resources/apps"),
+        ];
+        #[cfg(target_os = "macos")]
+        if let Some(home) = std::env::var_os("HOME") {
+            app_roots.push(PathBuf::from(home).join("Library/Application Support/ArtCraftStudio/apps"));
+        }
         for root in &app_roots {
             if let Ok(rd) = std::fs::read_dir(root) {
                 for ent in rd.flatten() {
@@ -239,7 +257,7 @@ impl UpdateManager {
     }
 
     /// Checks GitHub Releases & version.json for all apps in a background thread
-    pub fn check_all_updates(&mut self, repos: Vec<(String, String)>) {
+    pub fn check_all_updates(&mut self, repos: Vec<(String, String, bool)>) {
         if self.is_checking {
             return;
         }
@@ -289,8 +307,8 @@ impl UpdateManager {
                 }
             }
 
-            // Tier 2: Only check individual GitHub Releases API for custom repositories or missing apps
-            for (id, repo_url) in &repos {
+            // Tier 2: Only check individual GitHub Releases API for custom user repositories or missing apps
+            for (id, repo_url, is_custom) in &repos {
                 let repo_path = repo_url
                     .trim_start_matches("https://github.com/")
                     .trim_start_matches("http://github.com/")
@@ -298,10 +316,10 @@ impl UpdateManager {
                 if repo_path.is_empty() || repo_path.eq_ignore_ascii_case(suite_repo) {
                     continue;
                 }
-                // If it's the upstream default storytold repo and already resolved from version.json, skip API request to conserve rate limits
-                let is_default_storytold = repo_path.starts_with("storytold/");
+                // If it's already resolved from curated version.json and not a user custom-overridden repository,
+                // skip upstream API query to prevent version desync loops with the updater script!
                 let already_resolved = latest_store.lock().map(|m| m.contains_key(id)).unwrap_or(false);
-                if is_default_storytold && already_resolved {
+                if already_resolved && !is_custom {
                     continue;
                 }
 
@@ -408,6 +426,9 @@ impl UpdateManager {
             let _ = std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755));
         }
 
+        #[allow(unused_variables)]
+        let target_ver = self.latest_version(&app_id).unwrap_or_default();
+
         thread::spawn(move || {
             let script_str = script_path.display().to_string();
             let dest_str = dest_dir.display().to_string();
@@ -438,6 +459,8 @@ impl UpdateManager {
                     &app_id,
                     &repo_url,
                     &dest_str,
+                    "gochujangs33-dot/Craft-Studio",
+                    &target_ver,
                 ])
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped())
@@ -478,10 +501,23 @@ impl UpdateManager {
 
             let (success, msg) = match last_status {
                 Some(s) if s.success() => {
-                    let ver_file = dest_dir.join(".version");
                     let mut ver_str = String::new();
+                    let ver_file = dest_dir.join(".version");
                     if let Ok(v) = std::fs::read_to_string(&ver_file) {
                         ver_str = v.trim().to_string();
+                    }
+                    // On macOS, if dest_dir is read-only, update script writes to ~/Library/Application Support/
+                    #[cfg(target_os = "macos")]
+                    if ver_str.is_empty() {
+                        if let Some(home) = std::env::var_os("HOME") {
+                            let u_ver = std::path::PathBuf::from(home)
+                                .join("Library/Application Support/ArtCraftStudio/apps")
+                                .join(&app_id)
+                                .join(".version");
+                            if let Ok(v) = std::fs::read_to_string(&u_ver) {
+                                ver_str = v.trim().to_string();
+                            }
+                        }
                     }
                     if ver_str.is_empty() {
                         if let Ok(map) = latest_store.lock() {
