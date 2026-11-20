@@ -31,7 +31,7 @@ APPS_TO_UPDATE = [
     ("deckcraft", "storytold/deckcraft", "0.18.1", "deckcraft-0.18.1-windows-x64-portable.zip"),
     ("gridcraft", "storytold/gridcraft", "0.19.1", "gridcraft-0.19.1-windows-x64-portable.zip"),
     ("cadcraft", "storytold/cadcraft", "0.20.1", "cadcraft-0.20.1-windows-x64-portable.zip"),
-    ("solidcraft", "tangency-labs/solidcraft", "0.42.0", "solidcraft-0.42.0-windows-x64-portable.zip"),
+    ("solidcraft", "tangency-labs/solidcraft", "0.45.0", "solidcraft-0.45.0-windows-x64-portable.zip"),
     ("soundcraft", "storytold/soundcraft", "0.20.1", "soundcraft-0.20.1-windows-x64-portable.zip"),
     ("figcraft", "storytold/figcraft", "0.18.1", "figcraft-0.18.1-windows-x64-portable.zip"),
     ("texturecraft", "storytold/texturecraft", "0.6.1", "texturecraft-0.6.1-windows-x64-portable.zip"),
